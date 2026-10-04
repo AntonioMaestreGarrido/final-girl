@@ -185,6 +185,13 @@ small { font-size: 0.78em; }
 .decks b { color: var(--text); }
 .card-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; margin: 6px 0; }
 .killer-panel .card-row { gap: 10px; margin: 8px 0; }
+.art-stack { display: flex; flex-direction: column; width: min(100%, 22vh); margin: 6px 0; }
+.art-slot { position: relative; gap: 0; align-items: stretch; }
+.art-slot .card-img, .killer-panel .art-slot .card-img.wide { width: 100%; border-radius: 0; box-shadow: none; }
+.art-slot:first-child .card-img { border-radius: 6px 6px 0 0; }
+.art-slot:last-child .card-img { border-radius: 0 0 6px 6px; }
+.art-label { position: absolute; right: 4px; bottom: 4px; z-index: 1; margin: 0; padding: 0 5px; border-radius: 3px; background: rgba(0, 0, 0, 0.7); color: var(--text) !important; pointer-events: none; }
+.art-slot:first-child .art-label { top: 4px; bottom: auto; }
 .slot { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
 .slot small { color: var(--muted); }
 .card-img { width: clamp(44px, 6vh, 72px); border-radius: 5px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6); cursor: zoom-in; }

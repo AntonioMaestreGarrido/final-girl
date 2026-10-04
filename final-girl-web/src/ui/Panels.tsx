@@ -60,9 +60,9 @@ export function KillerPanel({ state }: { state: GameState }) {
         ))}
       </div>
       <WrathTrack state={state} id="killer" />
-      <div className="card-row">
-        <div className="slot">
-          <small>Gran Final</small>
+      <div className="art-stack">
+        <div className="slot art-slot">
+          <small className="art-label">Gran Final</small>
           <CardImg src={state.killer.finaleRevealed ? finale.image : k.finaleBack} alt={state.killer.finaleRevealed ? finale.name : 'Gran Final (oculto)'} className="wide" caption={state.killer.finaleRevealed ? `Gran Final: ${finale.name}
 Acción del Asesino cada turno: ${killerActionText(finale.finalAction)}${finale.text ? `
 ${finale.text}` : ''}${locationDef(state).finaleToken ? `
@@ -72,8 +72,8 @@ Acción del Asesino cada turno: ${killerActionText(k.initialAction)}`} />
         {state.killer.darkPowers.map((dp) => {
           const def = k.darkPowers.find((d) => d.id === dp.id)!;
           return (
-            <div className="slot" key={dp.id}>
-              <small>Poder Oscuro</small>
+            <div className="slot art-slot" key={dp.id}>
+              <small className="art-label">Poder Oscuro</small>
               <CardImg src={dp.revealed ? def.image : k.darkPowerBack} alt={dp.revealed ? def.name : 'Poder Oscuro (oculto)'} className="wide" caption={dp.revealed ? `Poder Oscuro${def.epic ? ' Épico' : ''}: ${def.name}
 ${def.text}` : 'Poder Oscuro boca abajo: se revela al llegar a su casilla de Sed de Sangre o en el Gran Final.'} />
             </div>
