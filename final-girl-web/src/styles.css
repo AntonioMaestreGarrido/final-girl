@@ -99,12 +99,12 @@ small { font-size: 0.78em; }
   background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; display: grid; gap: 6px;
 }
 
-.layout { display: grid; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr) clamp(240px, 21vw, 300px); gap: 8px; padding: 8px; min-height: 0; overflow: hidden; }
-.killer-row { grid-column: 1 / -1; min-height: 0; min-width: 0; }
+.layout { display: grid; grid-template-columns: clamp(300px, 22vw, 380px) minmax(0, 1fr) clamp(300px, 22vw, 380px); gap: 8px; padding: 8px; min-height: 0; overflow: hidden; }
 /* El mapa se ajusta al hueco disponible (ancho y alto) sin necesidad de scroll. */
 .board-col { min-height: 0; min-width: 0; position: relative; container-type: size; display: flex; align-items: center; justify-content: center; }
 .side-col { min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
 .side-col > .panel { flex: none; }
+.left-panel { order: -1; }
 .log-col { display: flex; flex-direction: column; min-height: 0; gap: 6px; flex: 1; }
 
 /* ------------------------------------------------------------ tablero */

@@ -97,15 +97,15 @@ export function GameView({ initial, settings, onSettings, onExit }: Props) {
         </header>
 
         <main className="layout">
-          <section className="killer-row">
+          <aside className="side-col left-panel">
             <KillerPanel state={state} />
-          </section>
+            <LocationPanel state={state} />
+          </aside>
           <section className="board-col">
             <Board state={state} targets={g.revealing ? [] : targets} onZone={onZone} selectedVictims={selectedVictims} onVictim={onVictim} />
             {lastDice?.anim?.kind === 'dice' && <DiceTray key={g.shown} faces={lastDice.anim.faces} />}
           </section>
-          <aside className="side-col">
-            <LocationPanel state={state} />
+          <aside className="side-col right-panel">
             <FinalGirlPanel state={state} />
             <section className="log-col">
               <Log entries={visibleLog} />
