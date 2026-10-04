@@ -99,7 +99,8 @@ small { font-size: 0.78em; }
   background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; display: grid; gap: 6px;
 }
 
-.layout { display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr) var(--side-w); gap: 8px; padding: 8px; min-height: 0; overflow: hidden; --side-w: clamp(240px, 21vw, 330px); }
+.layout { display: grid; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr) clamp(240px, 21vw, 300px); gap: 8px; padding: 8px; min-height: 0; overflow: hidden; }
+.killer-row { grid-column: 1 / -1; min-height: 0; min-width: 0; }
 /* El mapa se ajusta al hueco disponible (ancho y alto) sin necesidad de scroll. */
 .board-col { min-height: 0; min-width: 0; position: relative; container-type: size; display: flex; align-items: center; justify-content: center; }
 .side-col { min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
@@ -156,7 +157,8 @@ small { font-size: 0.78em; }
 /* ------------------------------------------------------------ paneles */
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
 .panel h3 { font-family: var(--title); font-weight: normal; margin: 0 0 2px; font-size: clamp(16px, 2.4vh, 22px); letter-spacing: 0.04em; }
-.killer-panel h3 { color: var(--blood-2); }
+.killer-panel { padding: 10px 12px; min-height: 0; }
+.killer-panel h3 { color: var(--blood-2); font-size: clamp(18px, 2.8vh, 28px); margin-bottom: 6px; }
 .health { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; margin-bottom: 6px; }
 .heart { width: 14px; height: 13px; background: var(--blood); clip-path: path('M7 13 L1 6.5 A3.4 3.4 0 0 1 7 2.4 A3.4 3.4 0 0 1 13 6.5 Z'); }
 .heart.off { background: #3b2a2c; }
@@ -182,10 +184,13 @@ small { font-size: 0.78em; }
 .decks { display: flex; gap: 12px; flex-wrap: wrap; color: var(--muted); font-size: 0.9em; }
 .decks b { color: var(--text); }
 .card-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; margin: 6px 0; }
+.killer-panel .card-row { gap: 10px; margin: 8px 0; }
 .slot { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
 .slot small { color: var(--muted); }
 .card-img { width: clamp(44px, 6vh, 72px); border-radius: 5px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6); cursor: zoom-in; }
 .card-img.wide { width: clamp(80px, 10.5vh, 130px); }
+.killer-panel .card-img { width: clamp(60px, 8vh, 95px); }
+.killer-panel .card-img.wide { width: clamp(100px, 12.5vh, 160px); }
 .card-img.fg-card { width: auto; max-width: 100%; height: clamp(90px, 15vh, 200px); }
 .card-img.clickable { cursor: pointer; }
 .empty-slot { width: 72px; height: 110px; border: 1px dashed var(--line); border-radius: 5px; display: grid; place-items: center; color: var(--muted); font-size: 12px; }
