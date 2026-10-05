@@ -117,6 +117,8 @@ export interface LogEntry {
     | { kind: 'fgMove'; path: ZoneId[] }
     | { kind: 'victimMove'; victim: string; path: ZoneId[] };
   tone?: 'info' | 'good' | 'bad' | 'killer' | 'phase';
+  /** Carta que se revela con esta entrada (la UI la muestra girándose en el centro). */
+  card?: { kind: 'horror' | 'event' | 'finale' | 'darkPower' | 'item'; id: CardId };
 }
 
 // ---------------------------------------------------------------- Contexto de efectos

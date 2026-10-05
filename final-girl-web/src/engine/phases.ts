@@ -175,7 +175,7 @@ function stepKillerPhase(s: GameState, task: T<'phase'>): 'done' | 'continue' {
 
 export function stepHorror(s: GameState, task: T<'horror'>): 'done' {
   const card = horrorDef(s, task.cardId);
-  log(s, `Carta de Horror: ${card.name}.`, 'killer');
+  log(s, `Carta de Horror: ${card.name}.`, 'killer', undefined, { kind: 'horror', id: card.id });
   if (card.requiresVictims && !s.victims.length) {
     log(s, 'No hay Víctimas en el tablero: se descarta y se roba la siguiente.');
     s.horrorDiscard.push(card.id);
@@ -206,7 +206,7 @@ export function stepHorror(s: GameState, task: T<'horror'>): 'done' {
 
 export function stepEvent(s: GameState, task: T<'event'>): 'done' {
   const ev = eventDef(s, task.cardId);
-  log(s, `Evento: ${ev.name}. ${ev.text}`, 'phase');
+  log(s, `Evento: ${ev.name}. ${ev.text}`, 'phase', undefined, { kind: 'event', id: ev.id });
   if (ev.specialVictim && !s.victims.length) {
     log(s, 'No hay Víctimas en el tablero: el Evento se ignora.');
     s.eventDiscard.push(ev.id);
@@ -343,7 +343,7 @@ export function revealFinale(s: GameState): void {
   const finale = k.finales.find((f) => f.id === s.killer.finale)!;
   s.killer.finaleRevealed = true;
   s.infoSeq++;
-  log(s, `¡GRAN FINAL! ${finale.name}.${finale.text ? ` ${finale.text}` : ''}`, 'killer');
+  log(s, `¡GRAN FINAL! ${finale.name}.${finale.text ? ` ${finale.text}` : ''}`, 'killer', undefined, { kind: 'finale', id: finale.id });
   revealDarkPowers(s);
   if (finale.custom === 'finale-miracle') miracleFinale(s);
   if (finale.custom === 'finale-second-dark-power') {
@@ -351,7 +351,7 @@ export function revealFinale(s: GameState): void {
     if (pool.length) {
       const extra = pick(s.rng, pool);
       s.killer.darkPowers.push({ id: extra.id, revealed: true });
-      log(s, `Segundo Poder Oscuro: ${extra.name}. ${extra.text}`, 'killer');
+      log(s, `Segundo Poder Oscuro: ${extra.name}. ${extra.text}`, 'killer', undefined, { kind: 'darkPower', id: extra.id });
     }
   }
 }

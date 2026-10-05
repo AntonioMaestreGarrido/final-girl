@@ -227,7 +227,7 @@ export function gainItem(s: GameState, id: CardId): void {
   s.fg.items.push(inst);
   inst.inHands = fits;
   const where = def.hands === 0 ? 'a la mochila' : fits ? 'a las manos' : 'a la mochila (no te caben en las manos)';
-  log(s, `Consigues: ${def.name} (va ${where}; mira «Tu equipo» abajo a la derecha).`, 'good');
+  log(s, `Consigues: ${def.name} (va ${where}; mira «Tu equipo» abajo a la derecha).`, 'good', undefined, { kind: 'item', id });
   if (def.custom === 'item-motorboat') placeBoat(s);
   if (def.hands > 0 && !fits) push(s, { t: 'arrange', optional: false });
 }

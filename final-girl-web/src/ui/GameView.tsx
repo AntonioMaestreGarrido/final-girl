@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { fgDef, killerDef, locationDef, serialize, type Game, type GameState, type LogEntry } from '../engine';
 import { asset } from './asset';
 import { Board } from './Board';
+import { CardReveal } from './CardReveal';
 import { FinalGirlPanel, KillerPanel, LocationPanel } from './Panels';
 import { Inventory } from './Inventory';
 import { PromptPanel } from './PromptPanel';
@@ -25,8 +26,20 @@ interface Props {
 }
 
 export function GameView({ initial, settings, onSettings, onExit }: Props) {
-  const g = useGame(initial, settings);
+  const [reveal, setReveal] = useState<{ key: number; card: NonNullable<LogEntry['card']> } | null>(null);
+  const g = useGame(initial, settings, !!reveal);
   const { state } = g;
+
+  // Cuando se muestra una entrada del registro que revela una carta, se abre la carta en el centro.
+  const prevShown = useRef(g.shown);
+  useEffect(() => {
+    const card = g.shown > prevShown.current ? state.log[g.shown - 1]?.card : undefined;
+    // Saltar (varias entradas de golpe) no enseña las cartas intermedias.
+    if (card && g.shown === prevShown.current + 1) setReveal({ key: g.shown, card });
+    else if (g.shown !== prevShown.current) setReveal(null);
+    prevShown.current = g.shown;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [g.shown]);
   const [selectedVictims, setSelectedVictims] = useState<string[]>([]);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -139,6 +152,8 @@ export function GameView({ initial, settings, onSettings, onExit }: Props) {
             <Inventory state={state} {...(g.revealing ? {} : { onUse: (uid: string, action: string) => g.send({ type: 'useItem', uid, action }) })} />
           </div>
         </footer>
+
+        {reveal && <CardReveal key={reveal.key} state={state} card={reveal.card} onClose={() => setReveal(null)} />}
 
         {state.outcome && !g.revealing && <Outcome state={state} onExit={onExit} />}
       </div>

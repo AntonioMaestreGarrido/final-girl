@@ -648,7 +648,7 @@ function useItem(s: GameState, uid: string, action: string): void {
         if (!deck[0]!.faceUp) {
           deck[0]!.faceUp = true;
           s.infoSeq++;
-          log(s, `Mapa: se revela ${itemDef(s, deck[0]!.id).name} en ${zoneName(s, zone)}.`);
+          log(s, `Mapa: se revela ${itemDef(s, deck[0]!.id).name} en ${zoneName(s, zone)}.`, 'info', undefined, { kind: 'item', id: deck[0]!.id });
         } else if (deck.length > 1) {
           push(s, choice(`Mapa: ¿retiras ${itemDef(s, deck[0]!.id).name} de ${zoneName(s, zone)} y revelas la siguiente?`, [
             { id: 'yes', label: 'Sí' },
@@ -701,7 +701,7 @@ registerChoice('map-remove', (s, option, data) => {
   if (deck[0]) {
     deck[0].faceUp = true;
     s.infoSeq++;
-    log(s, `Mapa: retiras ${itemDef(s, removed.id).name} y se revela ${itemDef(s, deck[0].id).name}.`);
+    log(s, `Mapa: retiras ${itemDef(s, removed.id).name} y se revela ${itemDef(s, deck[0].id).name}.`, 'info', undefined, { kind: 'item', id: deck[0].id });
   }
 });
 

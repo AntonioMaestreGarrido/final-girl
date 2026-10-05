@@ -5,8 +5,8 @@ import type { EffectSource, GameState, LogEntry, Phase, Task, Victim } from './s
 
 // ---------------------------------------------------------------- utilidades
 
-export function log(s: GameState, text: string, tone: LogEntry['tone'] = 'info', anim?: LogEntry['anim']): void {
-  s.log.push({ turn: s.turn, phase: s.phase, text, tone, ...(anim ? { anim } : {}) });
+export function log(s: GameState, text: string, tone: LogEntry['tone'] = 'info', anim?: LogEntry['anim'], card?: LogEntry['card']): void {
+  s.log.push({ turn: s.turn, phase: s.phase, text, tone, ...(anim ? { anim } : {}), ...(card ? { card } : {}) });
 }
 
 export const uid = (s: GameState, prefix: string) => `${prefix}${s.nextUid++}`;
@@ -258,7 +258,7 @@ export function revealDarkPowers(s: GameState): void {
     dp.revealed = true;
     s.infoSeq++;
     const def = killerDef(s).darkPowers.find((d) => d.id === dp.id)!;
-    log(s, `¡Se revela el Poder Oscuro: ${def.name}! ${def.text}`, 'killer');
+    log(s, `¡Se revela el Poder Oscuro: ${def.name}! ${def.text}`, 'killer', undefined, { kind: 'darkPower', id: def.id });
   }
 }
 

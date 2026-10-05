@@ -84,24 +84,38 @@ export function Board({ state, targets, onZone, selectedVictims = [], onVictim }
 
       {zones.map((z) => {
         const vs = state.victims.filter((v) => v.zone === z.id);
-        return vs.map((v, i) => {
-          const col = i % 5;
-          const row = Math.floor(i / 5);
-          const selectable = !!onVictim && targetsVictim(state, v.id);
-          const tip = v.role ? ROLE_TEXT[v.role] : `Víctima en ${z.label}${selectable ? '. Haz clic para elegirla.' : ''}`;
-          return (
-            <button
-              key={v.id}
-              className={`victim ${selectedVictims.includes(v.id) ? 'selected' : ''} ${selectable ? 'selectable' : ''}`}
-              style={{ left: `calc(${z.pos.x}% + ${(col - 2) * 1.3}%)`, top: `calc(${z.pos.y}% + ${2.2 + row * 2.4}%)` }}
-              onClick={() => selectable && onVictim?.(v.id)}
-              data-tip={tip}
-              aria-label={tip}
-            >
-              <Meeple color={v.special ? VICTIM_COLOR[v.special] : '#f2c230'} />
-            </button>
-          );
-        });
+        if (!vs.length) return null;
+        // Las Víctimas van debajo de las figuras (y de su nombre) para que nunca queden tapadas.
+        const figureHere = state.fg.zone === z.id || state.killer.zone === z.id;
+        const top0 = figureHere ? 6.4 : 2.2;
+        return [
+          ...vs.map((v, i) => {
+            const col = i % 5;
+            const row = Math.floor(i / 5);
+            const selectable = !!onVictim && targetsVictim(state, v.id);
+            const tip = v.role ? ROLE_TEXT[v.role] : `Víctima en ${z.label}${selectable ? '. Haz clic para elegirla.' : ''}`;
+            return (
+              <button
+                key={v.id}
+                className={`victim ${selectedVictims.includes(v.id) ? 'selected' : ''} ${selectable ? 'selectable' : ''}`}
+                style={{ left: `calc(${z.pos.x}% + ${(col - 2) * 1.3}%)`, top: `calc(${z.pos.y}% + ${top0 + row * 2.4}%)` }}
+                onClick={() => selectable && onVictim?.(v.id)}
+                data-tip={tip}
+                aria-label={tip}
+              >
+                <Meeple color={v.special ? VICTIM_COLOR[v.special] : '#f2c230'} />
+              </button>
+            );
+          }),
+          <span
+            key={`count-${z.id}`}
+            className="victim-count"
+            style={{ left: `calc(${z.pos.x}% + ${(Math.min(vs.length, 5) - 2) * 1.3 + 0.5}%)`, top: `calc(${z.pos.y}% + ${top0}%)` }}
+            data-tip={`${vs.length} ${vs.length === 1 ? 'Víctima' : 'Víctimas'} en ${z.label}`}
+          >
+            ×{vs.length}
+          </span>,
+        ];
       })}
 
       <Figure state={state} kind="killer" onClick={(z) => targets.includes(z) && onZone?.(z)} />

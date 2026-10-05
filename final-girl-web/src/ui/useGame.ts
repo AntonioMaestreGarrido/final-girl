@@ -53,7 +53,7 @@ export function useSettings() {
 }
 
 /** Estado de la partida + revelado progresivo del registro (ritmo de la fase del Asesino). */
-export function useGame(initial: Game, settings: Settings) {
+export function useGame(initial: Game, settings: Settings, hold = false) {
   const [game, setGame] = useState<Game>(initial);
   const [shown, setShown] = useState(initial.state.log.length);
   const [error, setError] = useState<string | null>(null);
@@ -74,12 +74,12 @@ export function useGame(initial: Game, settings: Settings) {
 
   // Modo automático: revela una entrada cada `speed` ms.
   useEffect(() => {
-    if (!revealing || settings.pacing !== 'auto') return;
+    if (!revealing || settings.pacing !== 'auto' || hold) return;
     timer.current = window.setTimeout(() => setShown((n) => Math.min(total, n + 1)), settings.speed);
     return () => {
       if (timer.current) window.clearTimeout(timer.current);
     };
-  }, [revealing, shown, total, settings.pacing, settings.speed]);
+  }, [revealing, shown, total, settings.pacing, settings.speed, hold]);
 
   const send = useCallback((input: Input) => {
     setError(null);
