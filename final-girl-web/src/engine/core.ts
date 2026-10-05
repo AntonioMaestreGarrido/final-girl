@@ -29,6 +29,15 @@ export function onKillerEnter(s: GameState): void {
   for (const fn of killerEnterHooks) fn(s);
 }
 
+// Reglas que reaccionan a muertes, entradas de Víctimas y subidas de Terror (Carnage at the Carnival).
+type VictimHook = (s: GameState, v: Victim, zone: ZoneId) => void;
+const victimEnterHooks: VictimHook[] = [];
+export const registerVictimEnters = (fn: VictimHook) => victimEnterHooks.push(fn);
+const victimKilledHooks: ((s: GameState, v: Victim, zone: ZoneId, opts: KillOpts) => void)[] = [];
+export const registerVictimKilled = (fn: (s: GameState, v: Victim, zone: ZoneId, opts: KillOpts) => void) => victimKilledHooks.push(fn);
+const terrorUpHooks: ((s: GameState) => void)[] = [];
+export const registerTerrorUp = (fn: (s: GameState) => void) => terrorUpHooks.push(fn);
+
 const NEXT_PHASE: Record<Phase, Phase> = {
   setup: 'action',
   action: 'planning',
@@ -130,6 +139,7 @@ export function changeTerror(s: GameState, amount: number): void {
     } else s.fg.terror--;
   }
   if (amount) log(s, `${amount > 0 ? '+' : ''}${amount} Terror (${terrorLabel(s)}).`, amount > 0 ? 'bad' : 'good');
+  if (amount > 0) for (const fn of terrorUpHooks) fn(s);
 }
 
 /** Nivel de Terror como número: casilla verde 0, 1-6, casilla roja 7 (decisión del usuario). */
@@ -143,6 +153,10 @@ export function terrorLabel(s: GameState): string {
 // ---------------------------------------------------------------- Vida
 
 export function healFG(s: GameState, amount: number, src?: EffectSource): void {
+  if (s.fg.cobra && amount > 0) {
+    s.fg.cobra = false;
+    return log(s, 'La Cobra oculta se descarta en lugar de que recuperes Vida.', 'good');
+  }
   let total = amount;
   if (src?.kind === 'action' && !src.healBonusApplied && has(s, 'item-first-aid')) {
     total++;
@@ -192,6 +206,12 @@ export function damageKiller(s: GameState, amount: number): void {
   if (left <= 0) return;
   s.killer.health.hp -= left;
   if (s.killer.health.hp > 0) return;
+  // Maestro inmortal: con todas las Marionetas en el tablero, Geppetto no puede perder su ficha de Vida Final.
+  const def = killerDef(s).minion;
+  if (def && s.minions.length >= def.count && has(s, 'dp-immortal-master')) {
+    s.killer.health.hp = 1;
+    return log(s, `Maestro inmortal: con las ${def.count} ${def.plural} en el tablero, ${killerDef(s).name} ignora el daño que lo mataría.`, 'killer');
+  }
   revealFinalLife(s, 'killer');
 }
 
@@ -270,10 +290,16 @@ export function placeVictims(s: GameState, zone: ZoneId, count: number): void {
   if (closedZone(s) === zone) return log(s, `${zoneName(s, zone)} está cerrado: no se colocan Víctimas.`);
   const n = Math.min(count, s.victimPool);
   if (n < count) log(s, `No quedan Víctimas suficientes en la caja (${n} de ${count}).`);
-  for (let i = 0; i < n; i++) s.victims.push({ id: uid(s, 'v'), zone });
+  const placed: Victim[] = [];
+  for (let i = 0; i < n; i++) {
+    const v = { id: uid(s, 'v'), zone };
+    s.victims.push(v);
+    placed.push(v);
+  }
   s.victimPool -= n;
   if (n) log(s, `${n} ${n === 1 ? 'nueva Víctima' : 'nuevas Víctimas'} en ${zoneName(s, zone)}.`);
   if (zone === 'lago' && n) applyDarkWaters(s);
+  for (const v of placed) for (const fn of victimEnterHooks) if (s.victims.includes(v)) fn(s, v, zone);
 }
 
 const ROLE_LABEL = {
@@ -283,6 +309,9 @@ const ROLE_LABEL = {
   super: 'el Super Turista',
   hombre: 'el Hombre Sagrado',
   guia: 'el Guía Turístico',
+  prometido: 'tu Prometido',
+  hermana: 'tu Hermana',
+  lobo: 'el Hombre Lobo',
 } as const;
 
 export const victimLabel = (v: Pick<Victim, 'role'>) => (v.role ? ROLE_LABEL[v.role] : 'una Víctima');
@@ -295,6 +324,9 @@ export const ROLE_EVENT = {
   super: 'el-super-turista',
   hombre: 'el-hombre-sagrado',
   guia: 'el-guia-turistico',
+  prometido: 'corre-yo-les-entretendre',
+  hermana: 'me-seguiste-hasta-aqui',
+  lobo: 'luna-llena',
 } as const;
 
 /** Una Víctima abandona la partida (muerta o salvada): descarta su Evento asociado. */
@@ -314,10 +346,13 @@ export interface KillOpts {
   noBloodlust?: boolean;
   /** Segunda muerte de Oscuro relámpago (no encadena otra). */
   chained?: boolean;
+  /** Muerta por una trampa (Prometido: +5 Terror). */
+  byTrap?: boolean;
 }
 
 export function killVictim(s: GameState, v: Victim, byKiller: boolean, opts: KillOpts = {}): void {
   if (!s.victims.includes(v)) return;
+  if (v.role === 'lobo') return log(s, 'El Hombre Lobo no puede ser asesinado.', 'info');
   const zoneBefore = v.zone;
   const othersBefore = s.victims.filter((x) => x.zone === zoneBefore && x !== v);
   s.victims = s.victims.filter((x) => x !== v);
@@ -329,6 +364,7 @@ export function killVictim(s: GameState, v: Victim, byKiller: boolean, opts: Kil
 
   const customs = activeCustoms(s);
   const inFgZone = zoneBefore === s.fg.zone;
+  for (const fn of victimKilledHooks) fn(s, v, zoneBefore, opts);
   if (v.role === 'novio' && inFgZone) {
     s.mods.timeAtNextAction = 12;
     log(s, 'El Novio ha muerto en tu zona: empezarás la próxima fase de Acción con 12 de Tiempo.', 'good');
@@ -392,9 +428,9 @@ export function discardRandomActions(s: GameState, count: number, why: string): 
 }
 
 /** Huida de varias Víctimas (con Fotografía con flash si alguna estaba en tu zona). */
-export function panicVictims(s: GameState, victims: Victim[], times = 1): void {
+export function panicVictims(s: GameState, victims: Victim[], times = 1, opts: FleeOpts = {}): void {
   const inFgZone = victims.some((v) => v.zone === s.fg.zone);
-  for (let n = 0; n < times; n++) for (const v of victims) if (s.victims.includes(v)) victimFlees(s, v);
+  for (let n = 0; n < times; n++) for (const v of victims) if (s.victims.includes(v)) victimFlees(s, v, opts);
   if (inFgZone && victims.length && has(s, 'ev-flash-photo')) discardRandomActions(s, 1, 'Fotografía con flash');
 }
 
@@ -410,11 +446,23 @@ export function applyDarkWaters(s: GameState): void {
 export function moveVictim(s: GameState, v: Victim, to: ZoneId): void {
   v.zone = to;
   if (to === 'lago') applyDarkWaters(s);
+  for (const fn of victimEnterHooks) if (s.victims.includes(v)) fn(s, v, to);
 }
 
 /** Huida: tira un dado y mueve la Víctima según los números de su zona. */
-export function victimFlees(s: GameState, v: Victim): void {
+export interface FleeOpts {
+  /** La Víctima muere si saca este número en lugar de huir (Brumosa emboscada). */
+  deathFace?: number;
+  /** La Víctima muere si huye a una de estas zonas (Marionetas, Payasos por doquier). */
+  deathZones?: ZoneId[];
+}
+
+export function victimFlees(s: GameState, v: Victim, opts: FleeOpts = {}): void {
   const face = rollDie(s.rng);
+  if (opts.deathFace === face) {
+    log(s, `${capitalize(victimLabel(v))} entra en pánico (dado ${face}) y no sobrevive.`, 'killer', { kind: 'dice', faces: [face] });
+    return killVictim(s, v, false);
+  }
   const exit = zoneDef(s, v.zone).flee.find((f) => f.faces.includes(face));
   const from = v.zone;
   if (exit && !victimCanEnter(s, from, exit.to)) {
@@ -431,6 +479,10 @@ export function victimFlees(s: GameState, v: Victim): void {
     path: [from, exit.to],
   });
   moveVictim(s, v, exit.to);
+  if (s.victims.includes(v) && opts.deathZones?.includes(exit.to)) {
+    log(s, `${capitalize(victimLabel(v))} huye hacia un Enemigo y muere.`, 'killer');
+    killVictim(s, v, false);
+  }
 }
 
 export const capitalize = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);

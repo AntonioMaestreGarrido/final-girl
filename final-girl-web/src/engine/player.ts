@@ -15,9 +15,12 @@ import {
   victimLeaves,
 } from './core';
 import { increaseWrath } from './wrath';
-import { choice, dealDamage, describeEffects, discardItem, gainItem, registerChoice, spendUse } from './effects';
+import { dealDamage, describeEffects, discardItem, gainItem, spendUse, zappoSearchZones } from './effects';
+import { charlieCanUltimate, charlieUltimate, junkSearchPenalty, mirrorsAfterRoll, onFgEnter, removeLegTrap, resolveTrapItem } from './carnival';
+import { enemyInRange, enemyZones } from './enemies';
 import { actionDef, boardDef, distance, fgDef, horrorDef, itemDef, killerDef, locationDef, neighbors, victimsIn, zoneDef, zoneName } from './lookup';
 import { rollDie } from './rng';
+import { choice, effectRolls, registerChoice, registerEffectRoll } from './registry';
 import * as grooves from './grooves';
 import type { EffectSource, GameState, Input, Prompt, RollPurpose, Task } from './state';
 
@@ -34,18 +37,23 @@ const dealsDamage = (cardId: CardId) => {
 
 /** Armas en las manos que pueden modificar `cardId` a la distancia actual del Asesino. */
 export function weaponsFor(s: GameState, cardId: CardId): string[] {
-  const d = distance(s, s.fg.zone, s.killer.zone, 'fg');
   return s.fg.items
     .filter((it) => {
       const def = itemDef(s, it.id);
       if (!def.range || !usable(s, it) || def.damage === undefined) return false;
       if (def.modifies === 'none') return false;
       if (Array.isArray(def.modifies) && !def.modifies.includes(cardId)) return false;
+      // Martillos: hace falta Salud suficiente para blandirlos.
+      if (def.custom === 'item-hammer' && s.fg.health.hp < 4) return false;
+      if (def.custom === 'item-hammer-charlie' && s.fg.health.hp < 2) return false;
       const max = def.range[1] + (def.custom === 'item-old-rifle' && zoneDef(s, s.fg.zone).sacred ? 2 : 0);
-      return d >= def.range[0] && d <= max;
+      return enemyInRange(s, def.range[0], max) || (has(s, 'finale-friends') && s.victims.some((v) => v.role !== 'lobo' && distance(s, s.fg.zone, v.zone, 'fg') >= def.range![0] && distance(s, s.fg.zone, v.zone, 'fg') <= max));
     })
     .map((it) => it.uid);
 }
+
+/** ¿Hay alguien a quien golpear sin arma (un Enemigo en tu zona o, con "Hice a tus amigos", una Víctima)? */
+const canPunch = (s: GameState) => enemyZones(s).includes(s.fg.zone) || (has(s, 'finale-friends') && victimsIn(s, s.fg.zone).some((v) => v.role !== 'lobo'));
 
 export function playableCards(s: GameState): { cardId: CardId; weapons: string[] }[] {
   const out: { cardId: CardId; weapons: string[] }[] = [];
@@ -54,11 +62,11 @@ export function playableCards(s: GameState): { cardId: CardId; weapons: string[]
     if (def.timing !== 'action') continue;
     if (dealsDamage(cardId)) {
       const weapons = weaponsFor(s, cardId);
-      if (s.fg.zone !== s.killer.zone && !weapons.length) continue;
+      if (!canPunch(s) && !weapons.length) continue;
       out.push({ cardId, weapons });
       continue;
     }
-    if (def.results?.double.some((alt) => alt.some((e) => e.kind === 'search')) && !zoneDef(s, s.fg.zone).search) continue;
+    if (def.results?.double.some((alt) => alt.some((e) => e.kind === 'search')) && !zoneDef(s, s.fg.zone).search && !zappoSearchZones(s).length) continue;
     out.push({ cardId, weapons: [] });
   }
   return out;
@@ -119,12 +127,15 @@ export function itemActions(s: GameState): ItemAction[] {
         break;
       case 'item-bow': {
         const cost = bowCost(def);
-        const d = distance(s, s.fg.zone, s.killer.zone, 'fg');
-        if (def.range && time >= cost && (it.uses ?? 0) > 0 && d >= def.range[0] && d <= def.range[1]) add('shoot', `Disparar ${def.name} (${cost} Tiempo)`);
+        if (def.range && time >= cost && (it.uses ?? 0) > 0 && enemyInRange(s, def.range[0], def.range[1])) add('shoot', `Disparar ${def.name} (${cost} Tiempo)`);
         break;
       }
+      case 'item-crystal-ball':
+        if (!once(it.uid)) add('use', 'Bola de cristal (una vez por fase)');
+        break;
     }
   }
+  if (s.fg.legTrap && time >= 2) out.push({ uid: 'cn:legtrap', action: 'remove', label: 'Quitar la trampa de tu pierna (2 Tiempo)' });
   if (s.activeHorror.includes('la-volubilidad-de-los-dioses') && time >= 3) {
     out.push({ uid: 'horror:la-volubilidad-de-los-dioses', action: 'discard', label: 'Descartar La volubilidad de los dioses (3 Tiempo)' });
   }
@@ -141,7 +152,7 @@ function reikoCanMove(s: GameState): boolean {
 
 export const rescuableVictims = (s: GameState) =>
   zoneDef(s, s.fg.zone).exit && s.phase === 'action'
-    ? victimsIn(s, s.fg.zone).filter((v) => v.role !== 'maldita' || s.victims.length === 1)
+    ? victimsIn(s, s.fg.zone).filter((v) => v.role !== 'lobo' && (v.role !== 'maldita' || s.victims.length === 1))
     : [];
 
 export function mainPrompt(s: GameState): Prompt {
@@ -149,7 +160,8 @@ export function mainPrompt(s: GameState): Prompt {
     type: 'main',
     playable: playableCards(s),
     itemActions: itemActions(s),
-    ultimate: reikoCanMove(s),
+    ultimate: reikoCanMove(s) || charlieCanUltimate(s),
+    ...(charlieCanUltimate(s) ? { ultimateLabel: 'Habilidad Definitiva: pierde 3 Vida y coge Golpe crítico' } : {}),
     canRescue: rescuableVictims(s).length > 0,
   };
 }
@@ -166,7 +178,7 @@ export function inputMain(s: GameState, input: Input): 'done' | 'continue' {
       const p = playableCards(s).find((c) => c.cardId === input.cardId);
       if (!p) throw new RuleError('No puedes jugar esa carta ahora');
       if (input.weaponUid && !p.weapons.includes(input.weaponUid)) throw new RuleError('Esa arma no sirve para esta carta');
-      if (s.fg.zone !== s.killer.zone && dealsDamage(input.cardId) && !input.weaponUid) throw new RuleError('Necesitas un arma a distancia para atacar desde aquí');
+      if (!canPunch(s) && dealsDamage(input.cardId) && !input.weaponUid) throw new RuleError('Necesitas un arma a distancia para atacar desde aquí');
       s.fg.hand.splice(s.fg.hand.indexOf(input.cardId), 1);
       s.actionDiscard.push(input.cardId);
       log(s, `${fgName(s)} juega ${actionDef(input.cardId).name}.`);
@@ -191,6 +203,10 @@ export function inputMain(s: GameState, input: Input): 'done' | 'continue' {
       useItem(s, input.uid, input.action);
       return 'continue';
     case 'ultimate': {
+      if (charlieCanUltimate(s)) {
+        charlieUltimate(s);
+        return 'continue';
+      }
       if (!reikoCanMove(s)) throw new RuleError('No puedes usar la Habilidad Definitiva ahora');
       s.mods.usedThisPhase.push('ult-reiko');
       log(s, `Habilidad Definitiva de Reiko: se lanza hacia ${killerDef(s).name}.`, 'good');
@@ -258,7 +274,12 @@ export function stepReaction(s: GameState, task: T<'reaction'>): 'done' | 'conti
   log(s, `${def.name}: ${n >= 2 ? 'éxito doble' : n === 1 ? 'éxito' : 'fracaso'}.`, n ? 'good' : 'bad');
   // Las armas cuerpo a cuerpo modifican el daño de Contraataque (FAQ); se elige la mejor.
   const melee = weaponsFor(s, task.cardId).map((u) => s.fg.items.find((i) => i.uid === u)!).sort((a, b) => (itemDef(s, b.id).damage ?? 0) - (itemDef(s, a.id).damage ?? 0));
-  const src: EffectSource = { kind: 'action', id: task.cardId, ...(melee[0] ? { weaponUid: melee[0].uid } : {}) };
+  // El contraataque va contra quien te atacó.
+  const attack = [...s.stack].reverse().find((x) => x.t === 'attackFG');
+  const by = attack && attack.t === 'attackFG' ? attack.by : undefined;
+  const minion = by?.startsWith('m:') ? s.minions.find((m) => m.id === by.slice(2)) : undefined;
+  const target = minion ? `mz:${minion.zone}` : by === 'killer' || !by ? 'killer' : undefined;
+  const src: EffectSource = { kind: 'action', id: task.cardId, ...(melee[0] ? { weaponUid: melee[0].uid } : {}), ...(target ? { target } : {}) };
   resolveLine(s, n >= 2 ? def.results!.double : n === 1 ? def.results!.single : def.results!.fail, src);
   // Bate y escudo de Adelaide: con algún éxito en Guardia, 1 de daño al Enemigo que te atacó.
   if (task.cardId === 'guardia' && n >= 1 && has(s, 'item-adelaide-bat')) {
@@ -278,9 +299,7 @@ registerChoice('prayer-book', (s, option, data) => {
 });
 
 // Tiradas pedidas por cartas (Carácter voluble, Ira hirviendo...): se resuelven por id.
-type EffectRoll = (s: GameState, successes: number) => void;
-const effectRolls = new Map<string, EffectRoll>();
-export const registerEffectRoll = (id: string, fn: EffectRoll) => effectRolls.set(id, fn);
+export { registerEffectRoll };
 
 // ---------------------------------------------------------------- Tiradas de Terror
 
@@ -305,6 +324,13 @@ export function newRoll(s: GameState, purpose: RollPurpose): T<'roll'> {
     dice++;
     extra.push('+1 por el Hacha de Reiko');
   }
+  if (purpose.kind === 'action') {
+    const junk = junkSearchPenalty(s, purpose.cardId);
+    if (junk) {
+      dice -= junk;
+      extra.push('−1 por perder a Zappo');
+    }
+  }
   dice = Math.max(1, dice);
   const auto34 = s.mods.partialsNextRoll || (s.phase === 'action' && s.mods.partialsThisPhase);
   s.mods.partialsNextRoll = false;
@@ -322,19 +348,21 @@ export function rollSuccesses(task: T<'roll'>): number {
 function rollOptions(s: GameState, task: T<'roll'>) {
   const convertible = !task.auto34 && s.fg.hand.length >= 2 && task.dice.some((f, i) => isPartial(f) && !task.converted.includes(i));
   const canCloseCall = s.fg.hand.includes('por-los-pelos');
-  const canLuckyDice = itemsWith(s, 'item-lucky-dice').length > 0;
-  return { convertible, canCloseCall, canLuckyDice };
+  const canLuckyDice = itemsWith(s, 'item-lucky-dice').length > 0 || itemsWith(s, 'item-super-lucky-dice').length > 0;
+  const canSister = has(s, 'ev-sister') && s.fg.time >= 2 && s.victims.some((v) => v.role === 'hermana' && v.zone === s.fg.zone);
+  return { convertible, canCloseCall, canLuckyDice, canSister };
 }
 
 export function stepRoll(s: GameState, task: T<'roll'>): 'done' | 'wait' {
   const o = rollOptions(s, task);
-  if (!o.convertible && !o.canCloseCall && !o.canLuckyDice) return finishRoll(s, task);
-  s.prompt = { type: 'roll', purpose: task.purpose, dice: task.dice, converted: task.converted, auto34: task.auto34, canCloseCall: o.canCloseCall, canLuckyDice: o.canLuckyDice };
+  if (!o.convertible && !o.canCloseCall && !o.canLuckyDice && !o.canSister) return finishRoll(s, task);
+  s.prompt = { type: 'roll', purpose: task.purpose, dice: task.dice, converted: task.converted, auto34: task.auto34, canCloseCall: o.canCloseCall, canLuckyDice: o.canLuckyDice, canSister: o.canSister };
   return 'wait';
 }
 
 function finishRoll(s: GameState, task: T<'roll'>): 'done' {
   task.successes = rollSuccesses(task);
+  if (task.purpose.kind === 'action' && dealsDamage(task.purpose.cardId)) mirrorsAfterRoll(s, task.dice);
   const idx = s.stack.indexOf(task);
   const parent = s.stack[idx - 1];
   if (task.purpose.kind === 'effect') {
@@ -388,13 +416,29 @@ export function inputRoll(s: GameState, task: T<'roll'>, input: Input): 'done' |
       return 'continue';
     }
     case 'luckyDice': {
-      const dice = itemsWith(s, 'item-lucky-dice')[0];
+      const plain = itemsWith(s, 'item-lucky-dice')[0];
+      const dice = plain ?? itemsWith(s, 'item-super-lucky-dice')[0];
       if (!dice) throw new RuleError('No tienes los Dados de la suerte');
       if (!input.dice.length || input.dice.some((d) => task.dice[d] === undefined)) throw new RuleError('Elige qué dados repetir');
       for (const d of input.dice) task.dice[d] = rollDie(s.rng);
       task.converted = task.converted.filter((d) => !input.dice.includes(d));
       log(s, `Dados de la suerte: repites ${input.dice.length} ${input.dice.length === 1 ? 'dado' : 'dados'} (${task.dice.join(' ')}).`, 'info', { kind: 'dice', faces: task.dice });
-      discardItem(s, dice.uid);
+      if (plain) discardItem(s, dice.uid);
+      else {
+        // Super dados de la suerte: después tiras un dado; con 1-4 se descartan, con 5-6 los conservas.
+        const keep = rollDie(s.rng);
+        log(s, `Super dados de la suerte: dado ${keep}. ${keep >= 5 ? 'Los conservas.' : 'Se descartan.'}`, keep >= 5 ? 'good' : 'bad', { kind: 'dice', faces: [keep] });
+        if (keep <= 4) discardItem(s, dice.uid);
+      }
+      return 'continue';
+    }
+    case 'sisterReroll': {
+      if (!has(s, 'ev-sister') || !s.victims.some((v) => v.role === 'hermana' && v.zone === s.fg.zone)) throw new RuleError('Tu Hermana no está contigo');
+      if (task.dice[input.die] === undefined) throw new RuleError('Dado no válido');
+      changeTime(s, -2);
+      task.dice[input.die] = rollDie(s.rng);
+      task.converted = task.converted.filter((d) => d !== input.die);
+      log(s, `Tu Hermana te ayuda (−2 Tiempo): vuelves a tirar un dado (${task.dice[input.die]}).`, 'info', { kind: 'dice', faces: task.dice });
       return 'continue';
     }
     case 'confirmRoll':
@@ -416,7 +460,15 @@ export function followLimit(s: GameState): number {
 function moveDestinations(s: GameState, mode: T<'fgMove'>['mode']): ZoneId[] {
   if (mode === 'free') return [s.killer.zone];
   if (mode === 'boat') return locationDef(s).zones.filter((z) => z.water && z.id !== s.fg.zone).map((z) => z.id);
-  return neighbors(s, s.fg.zone, 'fg');
+  if (s.fg.legTrap) return [];
+  const adj = neighbors(s, s.fg.zone, 'fg');
+  // Pértiga de 10': una vez por fase de Acción puedes saltar un espacio.
+  if (mode === 'walk' && has(s, 'item-pole') && !s.mods.usedThisPhase.includes('pole')) {
+    const far = new Set<ZoneId>();
+    for (const a of adj) for (const b of neighbors(s, a, 'fg')) if (b !== s.fg.zone && !adj.includes(b)) far.add(b);
+    return [...adj, ...far];
+  }
+  return adj;
 }
 
 export function stepFgMove(s: GameState, task: T<'fgMove'>): 'done' | 'wait' {
@@ -425,7 +477,7 @@ export function stepFgMove(s: GameState, task: T<'fgMove'>): 'done' | 'wait' {
     type: 'move',
     remaining: task.remaining,
     to: moveDestinations(s, task.mode),
-    followers: victimsIn(s, s.fg.zone).filter((v) => v.role !== 'hombre').map((v) => v.id),
+    followers: victimsIn(s, s.fg.zone).filter((v) => v.role !== 'hombre' && v.role !== 'lobo').map((v) => v.id),
     followLimit: followLimit(s),
     mode: task.mode,
   };
@@ -443,9 +495,16 @@ export function inputFgMove(s: GameState, task: T<'fgMove'>, input: Input): 'don
   const from = s.fg.zone;
   const here = victimsIn(s, from);
   const killerThere = s.killer.zone === input.zone;
+  const jump = task.mode === 'walk' && !neighbors(s, from, 'fg').includes(input.zone);
   let bring = here.filter((v) => input.bring.includes(v.id));
   if (bring.length !== input.bring.length) throw new RuleError('Esas Víctimas no están contigo');
-  if (bring.some((v) => v.role === 'hombre')) throw new RuleError('El Hombre Sagrado no te sigue');
+  if (bring.some((v) => v.role === 'hombre' || v.role === 'lobo')) throw new RuleError('Esa Víctima no te sigue');
+  if (jump) {
+    if (bring.length) log(s, 'Saltas con la pértiga: ninguna Víctima puede seguirte.', 'bad');
+    bring = [];
+    s.mods.usedThisPhase.push('pole');
+    log(s, 'Pértiga de 10 pies: saltas un espacio.', 'good');
+  }
   if (bring.length > followLimit(s)) throw new RuleError(`Solo te pueden seguir ${followLimit(s)} Víctimas`);
   // Las Víctimas no te siguen a la zona del Asesino (salvo la Novia o con la Habilidad de Barbara).
   if (killerThere && !has(s, 'ult-barbara') && bring.some((v) => v.role !== 'novia')) {
@@ -466,6 +525,7 @@ export function inputFgMove(s: GameState, task: T<'fgMove'>, input: Input): 'don
   const who = bring.length ? ` con ${bring.length === 1 ? victimLabel(bring[0]!) : `${bring.length} Víctimas`}` : '';
   log(s, `${fgName(s)} va a ${zoneName(s, input.zone)}${who}.`, 'info', { kind: 'fgMove', path: [from, input.zone] });
   for (const v of bring) moveVictim(s, v, input.zone);
+  onFgEnter(s, input.zone);
   if (task.mode !== 'walk') task.remaining = 0;
   if (task.remaining <= 0) offerGuideMove(s, task);
   if (rescuableVictims(s).length) push(s, { t: 'rescue' });
@@ -540,8 +600,23 @@ export function stepSearch(s: GameState, task: T<'search'>): 'done' | 'wait' {
       log(s, `No quedan Objetos en ${zoneName(s, task.zone)}.`);
       return 'done';
     }
-    task.drawn = deck.splice(0, task.draw);
+    // Asami (Habilidad Definitiva): robas 1 carta adicional y eliges una.
+    const extra = has(s, 'ult-asami') ? 1 : 0;
+    task.drawn = deck.splice(0, task.draw + extra);
     s.infoSeq++;
+    // Objeto Trampa: se resuelve primero y, si salió otro Objeto, te lo quedas.
+    const trap = task.drawn.find((c) => itemDef(s, c.id).trap);
+    if (trap) {
+      const rest = task.drawn.filter((c) => c !== trap);
+      if (rest.length === 1) pushEffects(s, [{ kind: 'custom', id: `cn-gain:${rest[0]!.id}` }], { kind: 'system' });
+      resolveTrapItem(s, trap.id, !!task.zappo);
+      if (rest.length > 1) {
+        task.drawn = rest;
+        s.prompt = { type: 'search', drawn: rest.map((c) => c.id) };
+        return 'wait';
+      }
+      return 'done';
+    }
     if (task.drawn.length === 1) {
       gainItem(s, task.drawn[0]!.id);
       return 'done';
@@ -554,12 +629,12 @@ export function stepSearch(s: GameState, task: T<'search'>): 'done' | 'wait' {
 export function inputSearch(s: GameState, task: T<'search'>, input: Input): 'done' {
   if (input.type !== 'searchPick') throw new RuleError('Respuesta no válida para la búsqueda');
   const keep = task.drawn[input.keep];
-  const other = task.drawn[1 - input.keep];
-  if (!keep || !other) throw new RuleError('Elige uno de los Objetos');
+  const others = task.drawn.filter((_, i) => i !== input.keep);
+  if (!keep || !others.length) throw new RuleError('Elige uno de los Objetos');
   const deck = s.itemDecks[task.zone]!;
-  if (input.otherTo === 'top') deck.unshift({ id: other.id, faceUp: true });
-  else deck.push({ id: other.id, faceUp: false });
-  log(s, `Dejas ${itemDef(s, other.id).name} ${input.otherTo === 'top' ? 'encima del mazo, bocarriba' : 'debajo del mazo, bocabajo'}.`);
+  if (input.otherTo === 'top') deck.unshift(...others.map((c, i) => ({ id: c.id, faceUp: i === 0 })));
+  else deck.push(...others.map((c) => ({ id: c.id, faceUp: false })));
+  log(s, `Dejas ${others.map((c) => itemDef(s, c.id).name).join(' y ')} ${input.otherTo === 'top' ? 'encima del mazo, bocarriba' : 'debajo del mazo, bocabajo'}.`);
   gainItem(s, keep.id);
   return 'done';
 }
@@ -576,6 +651,11 @@ export function inputArrange(s: GameState, input: Input): 'done' {
   if (chosen.length !== input.inHands.length) throw new RuleError('Objeto desconocido');
   if (chosen.some((i) => itemDef(s, i.id).hands === 0)) throw new RuleError('Ese objeto no se lleva en las manos');
   if (chosen.reduce((n, i) => n + itemDef(s, i.id).hands, 0) > 2) throw new RuleError('Solo tienes dos manos');
+  // Los martillos no se pueden llevar en la mochila: el que no vaya en las manos se descarta.
+  for (const hammer of s.fg.items.filter((i) => ['item-hammer', 'item-hammer-charlie'].includes(itemDef(s, i.id).custom ?? '') && !input.inHands.includes(i.uid))) {
+    log(s, `${itemDef(s, hammer.id).name} no cabe en la mochila: se descarta.`, 'bad');
+    discardItem(s, hammer.uid);
+  }
   for (const it of s.fg.items) it.inHands = input.inHands.includes(it.uid);
   log(s, `En las manos: ${chosen.map((i) => itemDef(s, i.id).name).join(' y ') || 'nada'}.`);
   return 'done';
@@ -606,6 +686,7 @@ function useItem(s: GameState, uid: string, action: string): void {
   const opt = itemActions(s).find((o) => o.uid === uid && o.action === action);
   if (!opt) throw new RuleError('No puedes usar ese objeto ahora');
   if (uid === 'horror:la-volubilidad-de-los-dioses') return grooves.discardFickleGods(s);
+  if (uid === 'cn:legtrap') return removeLegTrap(s);
   const it = s.fg.items.find((i) => i.uid === uid)!;
   const def = itemDef(s, it.id);
   if (grooves.useGroovesItem(s, uid, def.custom)) return;
@@ -687,7 +768,20 @@ function useItem(s: GameState, uid: string, action: string): void {
       changeTime(s, -bowCost(def));
       log(s, `${fgName(s)} dispara una flecha con ${def.name}.`);
       spendUse(s, uid);
-      dealDamage(s, def.damage ?? 1, { kind: 'item', id: it.id });
+      dealDamage(s, def.damage ?? 1, { kind: 'item', id: it.id, weaponUid: uid });
+      return;
+    }
+    case 'item-crystal-ball': {
+      s.mods.usedThisPhase.push(uid);
+      const face = rollDie(s.rng);
+      log(s, `Bola de cristal: dado ${face}.`, 'info', { kind: 'dice', faces: [face] });
+      if (face < 5 || !s.horrorDeck.length) return log(s, 'La bola de cristal no muestra nada.');
+      const top = s.horrorDeck[0]!;
+      s.infoSeq++;
+      push(s, choice(`Bola de cristal: la carta superior de Horror es «${horrorDef(s, top).name}»`, [
+        { id: 'keep', label: 'Dejarla encima' },
+        { id: 'bottom', label: 'Ponerla en el fondo del mazo' },
+      ], { kind: 'custom', id: 'flashlight' }));
       return;
     }
   }

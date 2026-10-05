@@ -1,4 +1,5 @@
 /** Utilidades de prueba: un jugador aleatorio que solo hace jugadas válidas. */
+import { enemyZones } from './enemies';
 import { itemDef, killerDef } from './lookup';
 import { createRng, next, type RngState } from './rng';
 import type { GameState, Input } from './state';
@@ -13,7 +14,7 @@ export function randomInput(s: GameState, r: RngState): Input {
       const opts: Input[] = [{ type: 'endActionPhase' }];
       for (const c of p.playable) {
         const weapon = c.weapons.length ? pickOne(r, c.weapons) : undefined;
-        if (s.fg.zone !== s.killer.zone && !weapon) continue;
+        if (!enemyZones(s).includes(s.fg.zone) && !weapon) continue;
         opts.push({ type: 'playCard', cardId: c.cardId, ...(weapon ? { weaponUid: weapon } : {}) }, { type: 'playCard', cardId: c.cardId });
       }
       for (const a of p.itemActions) opts.push({ type: 'useItem', uid: a.uid, action: a.action });
@@ -21,7 +22,7 @@ export function randomInput(s: GameState, r: RngState): Input {
       if (p.canRescue) opts.push({ type: 'startRescue' }, { type: 'startRescue' });
       if (s.fg.hand.length && next(r) < 0.1) opts.push({ type: 'discardForTime', cardIds: [s.fg.hand[0]!] });
       const pick = pickOne(r, opts);
-      return pick.type === 'playCard' && s.fg.zone !== s.killer.zone && !pick.weaponUid ? { type: 'endActionPhase' } : pick;
+      return pick.type === 'playCard' && !enemyZones(s).includes(s.fg.zone) && !pick.weaponUid ? { type: 'endActionPhase' } : pick;
     }
     case 'roll': {
       const partial = p.dice.findIndex((f, i) => (f === 3 || f === 4) && !p.converted.includes(i));
@@ -30,12 +31,13 @@ export function randomInput(s: GameState, r: RngState): Input {
       }
       if (p.canCloseCall && next(r) < 0.2) return { type: 'closeCall', ...(next(r) < 0.5 ? { die: 0 } : {}) };
       if (p.canLuckyDice && next(r) < 0.2) return { type: 'luckyDice', dice: [0] };
+      if (p.canSister && next(r) < 0.3) return { type: 'sisterReroll', die: 0 };
       return { type: 'confirmRoll' };
     }
     case 'choice':
       return { type: 'choose', option: pickOne(r, p.options).id };
     case 'move': {
-      if (p.mode === 'walk' && next(r) < 0.15) return { type: 'stopMoving' };
+      if (p.mode === 'walk' && (next(r) < 0.15 || !p.to.length)) return { type: 'stopMoving' };
       const zone = pickOne(r, p.to);
       const killerThere = zone === s.killer.zone;
       const followers = s.victims.filter((v) => p.followers.includes(v.id) && (!killerThere || v.role === 'novia'));
@@ -53,11 +55,19 @@ export function randomInput(s: GameState, r: RngState): Input {
       return pickOne(r, opts);
     }
     case 'search':
-      return { type: 'searchPick', keep: rand(r, 2), otherTo: next(r) < 0.5 ? 'top' : 'bottom' };
+      return { type: 'searchPick', keep: rand(r, p.drawn.length), otherTo: next(r) < 0.5 ? 'top' : 'bottom' };
     case 'arrange': {
       let hands = 0;
       const inHands: string[] = [];
+      // Los martillos no se pueden llevar en la mochila: van siempre en las manos.
+      const hammers = s.fg.items.filter((i) => ['item-hammer', 'item-hammer-charlie'].includes(itemDef(s, i.id).custom ?? ''));
+      for (const it of hammers) {
+        if (hands + itemDef(s, it.id).hands > 2) continue;
+        inHands.push(it.uid);
+        hands += itemDef(s, it.id).hands;
+      }
       for (const it of s.fg.items) {
+        if (hammers.includes(it)) continue;
         const h = itemDef(s, it.id).hands;
         if (h > 0 && hands + h <= 2 && next(r) < 0.8) {
           inHands.push(it.uid);
@@ -91,6 +101,12 @@ export function checkInvariants(s: GameState, totals: { actions: number; items: 
   if (new Set(s.victims.map((v) => v.id)).size !== s.victims.length) errors.push('Víctimas duplicadas');
   if (s.killer.bloodlust < 0 || s.killer.bloodlust >= killerDef(s).bloodlust.length) errors.push('Sed de Sangre fuera de rango');
   if (s.fg.items.filter((i) => i.inHands).reduce((n, i) => n + itemDef(s, i.id).hands, 0) > 2) errors.push('Más de dos manos ocupadas');
+  const minion = killerDef(s).minion;
+  if (minion) {
+    const total = s.minions.length + s.minionPool.ready.length + s.minionPool.exhausted.length;
+    if (total !== minion.count) errors.push(`Esbirros: ${total} ≠ ${minion.count}`);
+    if (new Set(s.minions.map((m) => m.id)).size !== s.minions.length) errors.push('Esbirros duplicados');
+  }
   if (!s.outcome && !s.prompt) errors.push('El motor se ha parado sin preguntar nada');
   return errors;
 }

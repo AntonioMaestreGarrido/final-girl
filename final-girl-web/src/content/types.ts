@@ -23,8 +23,15 @@ export type KillerTarget =
   | 'farthestVictim' // la Víctima más lejana
   | 'victimElseFG'; // la Víctima más cercana; si no hay Víctimas, la Chica Final
 
+/** Quién resuelve una Acción del Asesino: todos los Enemigos (Esbirros primero), solo los Esbirros o solo el Asesino. */
+export type KillerActor = 'all' | 'minions' | 'killer';
+
 export interface KillerAction {
   target: KillerTarget;
+  /** Por defecto 'all': los Esbirros actúan antes que el Asesino (reglamento pág. 33). */
+  actor?: KillerActor;
+  /** El icono de ataque va antes que el de movimiento (Bienvenidos al mayor show). */
+  attackFirst?: boolean;
   /** Número de iconos de movimiento (cada uno mueve tantas zonas como el Valor de Movimiento). */
   moves: number;
   /** Número de iconos de ataque. */
@@ -172,6 +179,8 @@ export interface ItemCard {
   flavor: string;
   text: string;
   hands: 0 | 1 | 2;
+  /** Objeto Trampa: va escondido en los mazos y se resuelve al robarlo. */
+  trap?: boolean;
   /** Alcance del arma [mín, máx] en zonas. */
   range?: [number, number];
   /** Modificador de daño del arma. */
@@ -203,6 +212,8 @@ export interface FinaleCard {
   image: string;
   /** Acción del Asesino tras revelar el Gran Final. */
   finalAction: Effect[];
+  /** Acción de Esbirro (línea M) que se resuelve antes que la del Asesino. */
+  minionAction?: Effect[];
   text?: string;
   /** Efecto al revelarse o continuo. */
   custom?: string;
@@ -232,6 +243,20 @@ export interface HorrorCard {
   stays?: string;
 }
 
+/** Esbirros del Asesino (reglamento pág. 32): fichas con su propia carta de referencia. */
+export interface MinionDef {
+  name: string;
+  plural: string;
+  /** Número de fichas (máximo en tablero y en la carta de referencia). */
+  count: number;
+  health: number;
+  attack: number;
+  /** Una imagen de ficha por Esbirro. */
+  tokens: string[];
+  reference: string;
+  text: string;
+}
+
 export interface Killer {
   id: string;
   name: string;
@@ -251,6 +276,9 @@ export interface Killer {
   bloodlustMaxEffect: Effect[];
   /** Acción inicial del Asesino (reverso de las cartas de Gran Final). */
   initialAction: Effect[];
+  /** Esbirros (Marionetas de Geppetto) y su Acción inicial (línea M del reverso del Final). */
+  minion?: MinionDef;
+  initialMinionAction?: Effect[];
   finaleBack: string;
   darkPowerBack: string;
   finales: FinaleCard[];
@@ -328,6 +356,8 @@ export interface Location {
   horror: HorrorCard[];
   items: ItemCard[];
   tokens: Record<string, string>;
+  /** Texto (y carta de referencia) que se enseña al pasar el ratón por una ficha del Lugar. */
+  tokenInfo?: Record<string, { text: string; image?: string }>;
   /** Medidor de Ira propio (Sacred Groves). */
   wrath?: WrathTrack;
   /** Track extra de Sed de Sangre: bloodlustTrack.rows[0] se aplica al subir a la casilla 1, etc. */

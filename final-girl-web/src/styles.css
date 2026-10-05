@@ -144,6 +144,16 @@ small { font-size: 0.78em; }
   background: rgba(0, 0, 0, 0.75); padding: 0 4px; border-radius: 2px;
 }
 .figure.killer .figure-name { color: var(--blood-2); }
+.minions-panel { display: flex; gap: 10px; align-items: center; margin-top: 6px; }
+.minion-ref { width: 64px; border-radius: 4px; }
+.minion-tokens { display: flex; gap: 10px; font-size: 13px; }
+.fg-status { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0; }
+.status.bad { background: rgba(138, 28, 38, 0.35); border: 1px solid var(--blood-2); border-radius: 4px; padding: 1px 6px; font-size: 12px; cursor: help; }
+.minion {
+  position: absolute; width: 3.4%; transform: translate(-50%, -50%); z-index: 7; cursor: help; border-radius: 50%;
+  border: 2px solid #8a1c26; box-shadow: 0 2px 6px #000, 0 0 8px rgba(160, 40, 200, 0.6);
+  transition: left 0.7s cubic-bezier(.5, 0, .3, 1), top 0.7s cubic-bezier(.5, 0, .3, 1);
+}
 .token { cursor: help; position: absolute; width: 3.4%; transform: translate(-50%, -50%); border-radius: 50%; z-index: 4; box-shadow: 0 2px 6px #000; }
 
 .dice-tray {
@@ -366,3 +376,5 @@ small { font-size: 0.78em; }
   position: absolute; transform: translateY(-50%); z-index: 7; font-size: 11px; font-weight: 700; line-height: 1;
   background: rgba(0, 0, 0, 0.85); color: #f2c230; padding: 1px 4px; border-radius: 8px; border: 1px solid #f2c230; cursor: help;
 }
+.card-reveal-hint { opacity: 0; transition: opacity 0.4s ease 0.6s; color: var(--muted); }
+.card-reveal-hint.visible { opacity: 1; }

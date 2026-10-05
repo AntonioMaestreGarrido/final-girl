@@ -12,8 +12,9 @@ import {
   revealDarkPowers,
   RuleError,
 } from './core';
+import { carnivalEventRevealed, carnivalFinaleRevealed, carnivalHorrorGate, carnivalTurnEnd, carnivalTurnStart, carnivalUpkeep } from './carnival';
 import { groovesEventRevealed, holyManUpkeep, miracleFinale, sacredGroundAtActionEnd, upkeepRoll } from './grooves';
-import { choice, registerChoice } from './effects';
+import { choice, registerChoice } from './registry';
 import { actionDef, boardDef, distances, eventDef, fgDef, horrorDef, killerDef, locationDef, shortestPaths, zoneName } from './lookup';
 import { hasActionPhaseOptions, mainPrompt } from './player';
 import { pick } from './rng';
@@ -76,6 +77,8 @@ function stepActionPhase(s: GameState, task: T<'phase'>): 'done' | 'continue' | 
       s.mods.timeAtNextAction = null;
       log(s, `Empiezas la fase de Acción con ${s.fg.time} de Tiempo.`, 'good');
     }
+    carnivalTurnStart(s);
+    if (s.stack[s.stack.length - 1] !== task) return 'continue';
   }
   if (s.mods.actionPhaseEnding || s.fg.time < 0 || !hasActionPhaseOptions(s)) {
     resetActionPhaseMods(s);
@@ -150,8 +153,10 @@ function stepKillerPhase(s: GameState, task: T<'phase'>): 'done' | 'continue' {
     s.mods.killedThisKillerPhase = 0;
     const finale = k.finales.find((f) => f.id === s.killer.finale)!;
     const action = s.killer.finaleRevealed ? finale.finalAction : k.initialAction;
+    // Con Esbirros hay una Acción de Esbirro (línea M) y otra del Asesino (línea K): se resuelven de arriba abajo.
+    const minionAction = (s.killer.finaleRevealed ? finale.minionAction : k.initialMinionAction) ?? [];
     log(s, `Acción del Asesino${s.killer.finaleRevealed ? ` (${finale.name})` : ''}.`, 'killer');
-    pushEffects(s, action, { kind: s.killer.finaleRevealed ? 'finale' : 'killer' });
+    pushEffects(s, [...minionAction, ...action], { kind: s.killer.finaleRevealed ? 'finale' : 'killer' });
     return 'continue';
   }
   if (task.step === 1) {
@@ -176,7 +181,7 @@ function stepKillerPhase(s: GameState, task: T<'phase'>): 'done' | 'continue' {
 export function stepHorror(s: GameState, task: T<'horror'>): 'done' {
   const card = horrorDef(s, task.cardId);
   log(s, `Carta de Horror: ${card.name}.`, 'killer', undefined, { kind: 'horror', id: card.id });
-  if (card.requiresVictims && !s.victims.length) {
+  if (card.requiresVictims && !s.victims.some((v) => v.role !== 'lobo')) {
     log(s, 'No hay Víctimas en el tablero: se descarta y se roba la siguiente.');
     s.horrorDiscard.push(card.id);
     const next = s.horrorDeck.shift();
@@ -198,6 +203,8 @@ export function stepHorror(s: GameState, task: T<'horror'>): 'done' {
     return 'done';
   }
   s.horrorDiscard.push(card.id);
+  // Cinta encontrada: puede cancelar una Trampa de Terror antes de resolverla.
+  if (carnivalHorrorGate(s, card.id, card.effects)) return 'done';
   pushEffects(s, card.effects, { kind: 'horror', id: card.id });
   return 'done';
 }
@@ -237,6 +244,14 @@ export function stepEvent(s: GameState, task: T<'event'>): 'done' {
     case 'ev-closed':
       groovesEventRevealed(s, ev.custom, ev.id);
       break;
+    case 'ev-golf-cart':
+    case 'ev-not-real':
+    case 'ev-sister':
+    case 'ev-fiance':
+    case 'ev-werewolf':
+    case 'ev-too-much-junk':
+      carnivalEventRevealed(s, ev.custom);
+      break;
     case 'ev-dark-waters':
       s.tokens.push({ id: 'aguas-oscuras', zone: 'lago' });
       applyDarkWaters(s);
@@ -252,11 +267,11 @@ export function stepEvent(s: GameState, task: T<'event'>): 'done' {
   return 'done';
 }
 
-const ROLE_COLOR = { novio: 'blue', novia: 'white', maldita: 'orange', super: 'white', hombre: 'blue', guia: 'green' } as const;
-const ROLE_NAME = { novio: 'el Novio', novia: 'la Novia', maldita: 'la Maldita', super: 'el Super Turista', hombre: 'el Hombre Sagrado', guia: 'el Guía Turístico' } as const;
-type Role = keyof typeof ROLE_COLOR;
+const ROLE_COLOR = { novio: 'blue', novia: 'white', maldita: 'orange', super: 'white', hombre: 'blue', guia: 'green', prometido: 'blue', hermana: 'white', lobo: 'orange' } as const;
+const ROLE_NAME = { novio: 'el Novio', novia: 'la Novia', maldita: 'la Maldita', super: 'el Super Turista', hombre: 'el Hombre Sagrado', guia: 'el Guía Turístico', prometido: 'tu Prometido', hermana: 'tu Hermana', lobo: 'el Hombre Lobo' } as const;
+export type Role = keyof typeof ROLE_COLOR;
 
-function assignRole(s: GameState, role: Role, from: ZoneId, farthest: boolean): void {
+export function assignRole(s: GameState, role: Role, from: ZoneId, farthest: boolean): void {
   const dist = distances(s, from, farthest ? 'enemy' : 'fg');
   const ds = s.victims.map((v) => dist.get(v.zone) ?? Infinity);
   const best = farthest ? Math.max(...ds) : Math.min(...ds);
@@ -268,7 +283,7 @@ function assignRole(s: GameState, role: Role, from: ZoneId, farthest: boolean): 
   setRole(s, role, zones[0]!);
 }
 
-function setRole(s: GameState, role: Role, zone: ZoneId): void {
+export function setRole(s: GameState, role: Role, zone: ZoneId): void {
   const v = s.victims.find((x) => x.zone === zone && !x.role);
   if (!v) return;
   v.role = role;
@@ -287,8 +302,9 @@ registerChoice('secret-tunnel', (s, option) => {
 
 function stepPanic(s: GameState, task: T<'phase'>): 'done' {
   if (s.mods.killedThisTurn > 0) {
-    const fleeing = s.victims.filter((v) => v.zone === s.killer.zone);
-    if (fleeing.length) log(s, 'Ha muerto alguien este turno: las Víctimas de la zona del Asesino huyen.');
+    // Las Víctimas que están con un Esbirro huyen igual que con el Asesino (pág. 33).
+    const fleeing = s.victims.filter((v) => v.zone === s.killer.zone || s.minions.some((m) => m.zone === v.zone));
+    if (fleeing.length) log(s, 'Ha muerto alguien este turno: las Víctimas de la zona de un Enemigo huyen.');
     panicVictims(s, fleeing);
   }
   return goTo(s, task, 'upkeep');
@@ -312,29 +328,35 @@ function stepUpkeep(s: GameState, task: T<'phase'>): 'done' | 'continue' | 'wait
   }
   if (task.step === 3) {
     task.step = 4;
-    upkeepRoll(s, 'boiling');
+    carnivalUpkeep(s);
     return 'continue';
   }
   if (task.step === 4) {
     task.step = 5;
-    push(s, { t: 'arrange', optional: true });
+    upkeepRoll(s, 'boiling');
     return 'continue';
   }
   if (task.step === 5) {
-    // Al final de la fase de Mantenimiento.
     task.step = 6;
-    upkeepRoll(s, 'fickle');
+    push(s, { t: 'arrange', optional: true });
     return 'continue';
   }
   if (task.step === 6) {
-    // Después de la fase de Mantenimiento.
+    // Al final de la fase de Mantenimiento.
     task.step = 7;
+    upkeepRoll(s, 'fickle');
+    return 'continue';
+  }
+  if (task.step === 7) {
+    // Después de la fase de Mantenimiento.
+    task.step = 8;
     upkeepRoll(s, 'volatile');
     return 'continue';
   }
   s.turn++;
   s.mods.killedThisTurn = 0;
   s.mods.usedThisTurn = [];
+  carnivalTurnEnd(s);
   return goTo(s, task, 'action');
 }
 
@@ -346,6 +368,7 @@ export function revealFinale(s: GameState): void {
   log(s, `¡GRAN FINAL! ${finale.name}.${finale.text ? ` ${finale.text}` : ''}`, 'killer', undefined, { kind: 'finale', id: finale.id });
   revealDarkPowers(s);
   if (finale.custom === 'finale-miracle') miracleFinale(s);
+  carnivalFinaleRevealed(s, finale.custom);
   if (finale.custom === 'finale-second-dark-power') {
     const pool = k.darkPowers.filter((d) => !d.epic && !s.killer.darkPowers.some((x) => x.id === d.id));
     if (pool.length) {

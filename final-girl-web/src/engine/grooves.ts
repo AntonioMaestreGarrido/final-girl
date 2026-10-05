@@ -21,7 +21,8 @@ import {
   victimLabel,
   victimLeaves,
 } from './core';
-import { choice, gainActionCard, registerChoice, registerEffect, spendUse, teleportKiller } from './effects';
+import { gainActionCard, spendUse, teleportKiller } from './effects';
+import { choice, registerChoice, registerEffect } from './registry';
 import { actionDef, closedZone, killerDef, locationDef, neighbors, shortestPaths, victimCanEnter, victimsIn, zoneDef, zoneName } from './lookup';
 import { newRoll, registerEffectRoll } from './player';
 import { rollDie } from './rng';

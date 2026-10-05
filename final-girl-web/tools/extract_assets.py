@@ -476,6 +476,160 @@ def grooves_portraits() -> None:
     save_webp(fit_long_side(board.crop((0, round(board.height * 0.19), board.width, board.height)), 1200), sg / "select.webp")
 
 
+# ------------------------------------------------ Carnage at the Carnival (CN)
+
+CN = SRC / "FINAL GIRL (CARNAGE AT THE CARNIVAL) [ES][MAQ]"
+
+
+def geppetto() -> None:
+    out = OUT / "killers" / "geppetto"
+    extract_cards(CN / "Terror" / "Geppetto.pdf", out / "horror", {
+        "loca-risa-interminable": (13, 0),
+        "piezas-de-repuesto": (15, 0),
+        "seras-un-divertido-nuevo-juguete": (16, 0),
+        "encerrado-y-sin-lugar-donde-ir": (17, 0),
+        "hacer-o-romper": (18, 0),
+        "no-hay-salida": (19, 0),
+        "traedmela": (20, 0),
+        "showman-maestro": (21, 0),
+        "nos-tienen-completamente-rodeados": (22, 0),
+        "baila-muneco": (28, 0),
+        "vienen-por-todas-partes": (29, 0),
+        "cielo-santo-esos-son-nuestros-amigos": (30, 0),
+        "cuerdas-cuchilla-de-marioneta": (31, 0),
+        "me-estan-ganando": (32, 0),
+        "soy-una-marioneta": (33, 0),
+        "marionetas-por-doquier": (34, 0),
+    })
+    extract_cards(CN / "Finale" / "Finale.pdf", out / "finale", {
+        "hice-a-tus-amigos": (13, CW),
+        "sin-ataduras": (15, CW),
+        "les-recuerdas": (16, CW),
+        "back": (14, CW),
+    })
+    extract_cards(CN / "Dark Power" / "Dark Power.pdf", out / "dark-power", {
+        "abominacion-masiva": (13, CW),
+        "injerto-de-armas": (15, CW),
+        "maestro-inmortal": (16, CW),
+        "unete-a-la-familia": (17, CW),
+        "back": (14, CW),
+    })
+    extract_cards(CN / "Cartas Especiales" / "Special Cards.pdf", out / "special", {
+        "marionetas": (15, 0),
+    })
+    extract_tokens(CN / "Tokens" / "Imagenes" / "Tokens_B_Front.jpg", out / "minions", {
+        "marioneta-1": (142, 125, 104),
+        "marioneta-2": (421, 122, 104),
+        "marioneta-3": (712, 125, 104),
+    })
+    print("Tablero y portada de Geppetto")
+    extract_image(CN / "Boards" / "SIde A Geppetto.jpg", out / "board.webp", 2000, crop_white=False)
+    extract_image(CN / "Box Covers" / "Side A Geppetto.jpg", out / "cover.webp", 1400)
+
+
+def carnival_of_blood() -> None:
+    out = OUT / "locations" / "carnival-of-blood"
+    extract_cards(CN / "Terror" / "Carnival of Blood.pdf", out / "horror", {
+        "estoy-atrapada": (13, 0),
+        "quema-quema": (15, 0),
+        "de-donde-salen-las-cuchillas": (16, 0),
+        "brumosa-emboscada": (17, 0),
+        "como-puede-haber-tantas-trampas": (18, 0),
+        "esto-es-un-apoyo": (19, 0),
+        "bienvenidos-al-mayor-show": (20, 0),
+        "como-se-ha-escapado-el-leon": (21, 0),
+    })
+    extract_cards(CN / "Eventos" / "Eventos.pdf", out / "events", {
+        "transporte-de-empleados": (13, CCW),
+        "no-es-real": (15, CCW),
+        "me-seguiste-hasta-aqui": (16, CCW),
+        "corre-yo-les-entretendre": (17, CCW),
+        "luna-llena": (18, CCW),
+        "espejos-por-todas-partes": (19, CCW),
+        "demasiada-basura": (20, CCW),
+        "como-puede-ser-de-peligroso": (21, CCW),
+        "payasos-por-doquier": (22, CCW),
+        "panico-animal": (23, CCW),
+        "back": (14, CCW),
+    })
+    extract_cards(CN / "Setup" / "Setup.pdf", out / "setup", {
+        "encerrados-en-caja": (13, 0),
+        "no-tiene-gracia": (15, 0),
+        "escenario-central": (16, 0),
+        "corro-alrededor-de-rosie": (17, 0),
+        "tarde-para-el-show": (18, 0),
+        "back": (14, 0),
+    })
+    extract_cards(CN / "Objetos" / "Objetos.pdf", out / "items", {
+        "martillo-de-forzudo": (13, 0),
+        "zappo": (15, 0),
+        "bebida-energetica": (16, 0),
+        "cuchillo": (17, 0),
+        "super-dados-de-la-suerte": (18, 0),
+        "bate-de-aluminio": (19, 0),
+        "kit-de-primeros-auxilios": (20, 0),
+        "pertiga": (21, 0),
+        "latigo": (22, 0),
+        "cinta-encontrada": (23, 0),
+        "pildoras-misteriosas": (24, 0),
+        "hacha-arrojadiza": (25, 0),
+        "bola-de-cristal": (26, 0),
+        "viejo-revolver": (27, 0),
+        "tapadera": (28, 0),
+        "kit-de-maquillaje": (29, 0),
+        "bandolera-de-cuchillos": (35, 0),
+        "spray-de-pimienta": (36, 0),
+        "back": (14, 0),
+    })
+    extract_cards(CN / "Objetos" / "Objetos Trampa.pdf", out / "items", {
+        "trampa-para-osos-de-acero": (13, 0),
+        "trampa-de-gas-somnifero": (15, 0),
+        "trampa-de-la-cobra-oculta": (16, 0),
+    })
+    extract_cards(CN / "Cartas Especiales" / "Special Cards.pdf", out / "special", {
+        "referencia-trampa": (13, 0),
+    })
+    extract_tokens(CN / "Tokens" / "Imagenes" / "Tokens_A_Front.jpg", out / "tokens", {
+        "trampa-acido": (140, 125, 104),
+        "trampa-red": (425, 122, 104),
+        "trampa-sierras": (708, 125, 104),
+        "carro-de-golf": (140, 408, 104),
+        "calavera": (425, 408, 104),
+    })
+    print("Tablero y portada de Carnival of Blood")
+    extract_image(CN / "Boards" / "Side B Carnival of blood.jpg", out / "board.webp", 2400, crop_white=False)
+    extract_image(CN / "Box Covers" / "SIde B Carnival Of Blood.jpg", out / "cover.webp", 1400)
+
+
+def carnival_final_girls() -> None:
+    out = OUT / "final-girls"
+    extract_cards(CN / "Final Girls" / "Final Girls.pdf", out, {
+        "asami-ultimate": (13, CW),
+        "asami": (14, CW),
+        "charlie-ultimate": (15, CW),
+        "charlie": (16, CW),
+    })
+    extract_cards(CN / "Objetos" / "Bonus" / "Bonus.pdf", out / "bonus-items", {
+        "cinturon-de-cuchillos-de-asami": (16, 0),
+        "martillo-gigante-de-charlie": (20, 0),
+    })
+
+
+def carnival_portraits() -> None:
+    print("Tokens y selección de Carnage at the Carnival")
+    fg = OUT / "final-girls"
+    portrait_token(fg / "asami.webp", fg / "asami-token.webp", 830, 320, 200, (245, 245, 245))
+    portrait_token(fg / "charlie.webp", fg / "charlie-token.webp", 820, 320, 200, (245, 245, 245))
+    gep = OUT / "killers" / "geppetto"
+    board = Image.open(gep / "board.webp").convert("RGB")
+    w, h = board.size
+    portrait_token(gep / "board.webp", gep / "token.webp", round(w * 0.388), round(h * 0.368), round(w * 0.06), (200, 20, 28))
+    save_webp(board.crop((round(w * 0.20), round(h * 0.25), round(w * 0.64), round(h * 0.93))), gep / "select.webp")
+    cb = OUT / "locations" / "carnival-of-blood"
+    board = Image.open(cb / "board.webp").convert("RGB")
+    save_webp(fit_long_side(board.crop((0, round(board.height * 0.19), board.width, board.height)), 1200), cb / "select.webp")
+
+
 def main() -> None:
     if not SRC.exists():
         sys.exit(f"No encuentro el material original en {SRC}")
@@ -491,6 +645,11 @@ def main() -> None:
         sacred_groves()
         grooves_final_girls()
         grooves_portraits()
+    if not only or "carnival" in only:
+        geppetto()
+        carnival_of_blood()
+        carnival_final_girls()
+        carnival_portraits()
     total = sum(f.stat().st_size for f in OUT.rglob("*.webp"))
     print(f"\nTotal: {len(list(OUT.rglob('*.webp')))} archivos, {total / 1024 / 1024:.1f} MB")
 

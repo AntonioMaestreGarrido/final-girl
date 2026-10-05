@@ -37,7 +37,16 @@ export interface Victim {
   role?: VictimRole;
 }
 
-export type VictimRole = 'novio' | 'novia' | 'maldita' | 'super' | 'hombre' | 'guia';
+export type VictimRole = 'novio' | 'novia' | 'maldita' | 'super' | 'hombre' | 'guia' | 'prometido' | 'hermana' | 'lobo';
+
+/** Esbirro en el tablero (Marioneta). */
+export interface Minion {
+  id: string;
+  zone: ZoneId;
+  hp: number;
+  /** Ya recibió daño este turno (Abominación masiva ignora el primero). */
+  hit?: boolean;
+}
 
 export interface ItemInst {
   uid: string;
@@ -70,6 +79,10 @@ export interface FinalGirlState {
   rescueSlots: boolean[];
   ultimate: boolean;
   saved: number;
+  /** Trampa para osos de acero en la pierna (no puedes moverte hasta gastar 2 Tiempo). */
+  legTrap?: boolean;
+  /** Cobra oculta junto a tu carta: pierdes 1 Vida cada Mantenimiento hasta que recuperes salud. */
+  cobra?: boolean;
 }
 
 export interface KillerState {
@@ -133,6 +146,8 @@ export interface EffectSource {
   damageBonusApplied?: boolean;
   /** Ya se aplicó el Kit de primeros auxilios en esta resolución. */
   healBonusApplied?: boolean;
+  /** Enemigo que debe recibir el daño (Contraataque contra quien te atacó). */
+  target?: string;
 }
 
 // ---------------------------------------------------------------- Tareas
@@ -144,10 +159,10 @@ export type Task =
   | { t: 'roll'; purpose: RollPurpose; dice: number[]; converted: number[]; auto34: boolean; successes?: number }
   | { t: 'fgMove'; remaining: number; src: EffectSource; mode: 'walk' | 'boat' | 'free'; moved?: number }
   | { t: 'rescue' }
-  | { t: 'killerAction'; action: KillerAction; src: EffectSource; step: 'target' | 'path' | 'move' | 'spray' | 'attack' | 'obsession' | 'done'; target?: Target; killed: number; attackedFG: boolean; attacksLeft?: number; path?: ZoneId[] }
-  | { t: 'attackFG'; damage: number; reduce: number; ignore: boolean; resolved?: boolean }
+  | { t: 'killerAction'; action: KillerAction; src: EffectSource; step: 'target' | 'path' | 'move' | 'spray' | 'attack' | 'obsession' | 'done'; target?: Target; killed: number; attackedFG: boolean; attacksLeft?: number; path?: ZoneId[]; actor?: string; moved?: boolean }
+  | { t: 'attackFG'; damage: number; reduce: number; ignore: boolean; resolved?: boolean; by?: string }
   | { t: 'reaction'; cardId: CardId; attack: number; rolled?: boolean; successes?: number }
-  | { t: 'search'; zone: ZoneId; drawn: DeckCard[]; draw: 1 | 2 }
+  | { t: 'search'; zone: ZoneId; drawn: DeckCard[]; draw: 1 | 2; zappo?: boolean }
   | { t: 'gainItem'; uid: string }
   | { t: 'arrange'; optional: boolean }
   | { t: 'horror'; cardId: CardId }
@@ -181,8 +196,8 @@ export interface Option {
 }
 
 export type Prompt =
-  | { type: 'main'; playable: { cardId: CardId; weapons: string[] }[]; itemActions: { uid: string; action: string; label: string }[]; ultimate: boolean; canRescue: boolean }
-  | { type: 'roll'; purpose: RollPurpose; dice: number[]; converted: number[]; auto34: boolean; canCloseCall: boolean; canLuckyDice: boolean }
+  | { type: 'main'; playable: { cardId: CardId; weapons: string[] }[]; itemActions: { uid: string; action: string; label: string }[]; ultimate: boolean; ultimateLabel?: string; canRescue: boolean }
+  | { type: 'roll'; purpose: RollPurpose; dice: number[]; converted: number[]; auto34: boolean; canCloseCall: boolean; canLuckyDice: boolean; canSister?: boolean }
   | { type: 'choice'; title: string; options: Option[] }
   | { type: 'move'; remaining: number; to: ZoneId[]; followers: string[]; followLimit: number; mode: 'walk' | 'boat' | 'free' }
   | { type: 'rescue'; victims: string[]; slots: number[]; ultimate: boolean }
@@ -204,6 +219,7 @@ export type Input =
   | { type: 'convertPartial'; die: number; discard: [CardId, CardId] }
   | { type: 'closeCall'; die?: number }
   | { type: 'luckyDice'; dice: number[] }
+  | { type: 'sisterReroll'; die: number }
   | { type: 'confirmRoll' }
   // genéricas
   | { type: 'choose'; option: string }
@@ -233,6 +249,9 @@ export interface GameState {
   killer: KillerState;
   victims: Victim[];
   dead: Victim[];
+  /** Esbirros en el tablero y fichas en las casillas Listo / Agotado de su carta. */
+  minions: Minion[];
+  minionPool: { ready: string[]; exhausted: string[] };
   /** Víctimas retiradas del tablero sin morir ni salvarse (El hombre sagrado). */
   gone?: number;
   /** Víctimas amarillas que quedan en la caja. */

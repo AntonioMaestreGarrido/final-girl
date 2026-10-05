@@ -95,7 +95,8 @@ describe.each(FILMS.map((f) => [f.id, f] as const))('Película %s', (_, film) =>
       expect(zoneIds.has(setup.finalGirl), setup.id).toBe(true);
       expect(zoneIds.has(setup.killer), setup.id).toBe(true);
       for (const zone of Object.keys(setup.victims)) expect(zoneIds.has(zone), `${setup.id}: ${zone}`).toBe(true);
-      expect(total(setup.victims), setup.id).toBe(n);
+      // La carta «Corro alrededor de Rosie» de Carnival of Blood trae 13 Víctimas impresas.
+      expect(total(setup.victims), setup.id).toBe(setup.id === 'corro-alrededor-de-rosie' ? 13 : n);
     }
   });
 

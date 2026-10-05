@@ -16,11 +16,16 @@ export function killerActionText(effects: Effect[]): string {
       if (e.kind === 'unleash') return `Desata la ${e.which === 'killer' ? 'Ira Asesina' : 'Ira Divina'}`;
       if (e.kind === 'wrath' && e.op === 'increase' && e.amount) return `aumenta la ${e.which === 'divine' ? 'Ira Divina' : 'Ira Asesina'} en ${e.amount}`;
       if (e.kind === 'custom' && e.id === 'inka-initial-wrath') return 'si la Ira Asesina está en 1-2, auméntala en 1';
+      if (e.kind === 'custom' && e.id === 'minion-spawn') return 'aparece 1 Marioneta (las agotadas vuelven a Listo)';
       if (e.kind !== 'killerAction') return '';
       const a = e.action;
-      const parts = [`Objetivo: ${TARGET[a.target]}`];
-      if (a.moves) parts.push(a.moves === 1 ? 'se mueve' : `se mueve ${a.moves} veces`);
-      if (a.attacks) parts.push(a.attacks === 1 ? 'ataca' : `ataca ${a.attacks} veces`);
+      const parts = [`${a.actor === 'minions' ? 'Esbirros' : a.actor === 'killer' ? 'Asesino' : 'Enemigos'} · Objetivo: ${TARGET[a.target]}`];
+      const steps = [
+        a.moves ? (a.moves === 1 ? 'se mueve' : `se mueve ${a.moves} veces`) : '',
+        a.attacks ? (a.attacks === 1 ? 'ataca' : `ataca ${a.attacks} veces`) : '',
+      ].filter(Boolean);
+      if (a.attackFirst) steps.reverse();
+      parts.push(...steps);
       return parts.join(' → ');
     })
     .filter(Boolean)

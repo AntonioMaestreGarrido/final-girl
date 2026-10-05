@@ -18,11 +18,16 @@ import {
   pushEffects,
   onKillerEnter,
   RuleError,
+  victimLabel,
 } from './core';
 import { applyWrath, unleashWrath, wrathAmount } from './wrath';
-import { actionDef, distance, distances, horrorDef, itemDef, killerDef, locationDef, neighbors, shortestPaths, victimsIn, zoneDef, zoneName } from './lookup';
+import { resolveTrapItem } from './carnival';
+import { startKillerAction } from './killer';
+import { damageMinionsAt, enemyZones, minionName, minionsAt } from './enemies';
+import { actionDef, distance, distances, fgDef, horrorDef, itemDef, killerDef, locationDef, neighbors, shortestPaths, victimsIn, zoneDef, zoneName } from './lookup';
 import { pick, rollDie } from './rng';
-import type { ChoiceHandler, EffectSource, GameState, Task } from './state';
+import { choice, customChoices, customEffects, registerChoice, registerEffect } from './registry';
+import type { ChoiceHandler, EffectSource, GameState } from './state';
 
 // ---------------------------------------------------------------- aplicar un efecto
 
@@ -37,6 +42,7 @@ export function applyEffect(s: GameState, e: Effect, src: EffectSource): void {
     case 'loseHealth':
       return damageFG(s, e.amount);
     case 'move':
+      if (s.fg.legTrap) return log(s, 'La trampa para osos te sujeta la pierna: no puedes moverte.', 'bad');
       return push(s, { t: 'fgMove', remaining: e.upTo, src, mode: 'walk' });
     case 'endActionPhase':
       if (s.phase === 'action') s.mods.actionPhaseEnding = true;
@@ -52,7 +58,7 @@ export function applyEffect(s: GameState, e: Effect, src: EffectSource): void {
       return log(s, e.scope === 'actionPhase' ? 'Hasta el final de la fase de Acción, los 3 y 4 son éxitos.' : 'En la próxima Tirada de Terror, los 3 y 4 son éxitos.', 'good');
     case 'search': {
       const zone = s.fg.zone;
-      if (!zoneDef(s, zone).search) return log(s, 'No estás en una zona de Búsqueda.');
+      if (!zoneDef(s, zone).search) return searchFromAfar(s, e.draw);
       return push(s, { t: 'search', zone, drawn: [], draw: e.draw });
     }
     case 'drawItemAnyDeck': {
@@ -73,7 +79,7 @@ export function applyEffect(s: GameState, e: Effect, src: EffectSource): void {
     case 'bloodlust':
       return increaseBloodlust(s, e.amount);
     case 'killerAction':
-      return push(s, { t: 'killerAction', action: e.action, src, step: 'target', killed: 0, attackedFG: false });
+      return startKillerAction(s, e.action, src);
     case 'killerHeal':
       return healKiller(s, e.amount);
     case 'drawEvent':
@@ -116,18 +122,58 @@ export function applyEffect(s: GameState, e: Effect, src: EffectSource): void {
   }
 }
 
-export function choice(title: string, options: { id: string; label: string }[], then: ChoiceHandler): Task {
-  return { t: 'choice', title, options, then };
-}
+export { choice, registerChoice, registerEffect };
 
 // ---------------------------------------------------------------- daño de la Chica Final
+
+/** Contexto de un ataque ya calculado (serializable para las elecciones de objetivo). */
+interface AttackCtx {
+  total: number;
+  weaponUid?: string;
+  weaponId?: string;
+  weaponCustom?: string;
+  /** Es el primer daño de la carta (se aplican los efectos del arma una vez). */
+  firstHit: boolean;
+  /** Enemigo obligado (Contraataque contra quien te atacó). */
+  forced?: string;
+}
+
+/** Alcance con el que ataca: el del arma elegida o tu propia zona. */
+function attackRange(s: GameState, src: EffectSource): [number, number] {
+  const weapon = src.weaponUid ? s.fg.items.find((i) => i.uid === src.weaponUid) : undefined;
+  const def = weapon ? itemDef(s, weapon.id) : undefined;
+  if (!def?.range) return [0, 0];
+  return [def.range[0], def.range[1] + (def.custom === 'item-old-rifle' && zoneDef(s, s.fg.zone).sacred ? 2 : 0)];
+}
+
+/** Objetivos posibles de un ataque: el Asesino, grupos de Esbirros por zona y (Gran Final de Geppetto) Víctimas. */
+export function attackCandidates(s: GameState, src: EffectSource): { id: string; label: string }[] {
+  const [min, max] = attackRange(s, src);
+  const dist = distances(s, s.fg.zone, 'fg');
+  const inRange = (z: string) => {
+    const d = dist.get(z);
+    return d !== undefined && d >= min && d <= max;
+  };
+  const out: { id: string; label: string }[] = [];
+  if (inRange(s.killer.zone)) out.push({ id: 'killer', label: `${killerDef(s).name} (${zoneName(s, s.killer.zone)})` });
+  for (const z of new Set(s.minions.map((m) => m.zone))) {
+    if (!inRange(z)) continue;
+    const n = minionsAt(s, z).length;
+    out.push({ id: `mz:${z}`, label: `${n} ${n === 1 ? minionName(s) : minionName(s, true)} en ${zoneName(s, z)}` });
+  }
+  if (has(s, 'finale-friends')) {
+    for (const z of new Set(s.victims.filter((v) => v.role !== 'lobo').map((v) => v.zone))) {
+      if (inRange(z)) out.push({ id: `vz:${z}`, label: `Matar a una Víctima en ${zoneName(s, z)} (sube la Sed de Sangre)` });
+    }
+  }
+  return out;
+}
 
 /** Daño infligido por la Chica Final con una carta: añade arma y Habilidad Definitiva (una vez). */
 export function dealDamage(s: GameState, amount: number, src: EffectSource): void {
   if (amount <= 0) return;
   let total = amount;
-  const weapon = src.kind === 'action' && src.weaponUid ? s.fg.items.find((i) => i.uid === src.weaponUid) : undefined;
-  const weaponDef = weapon ? itemDef(s, weapon.id) : undefined;
+  const weapon = src.weaponUid ? s.fg.items.find((i) => i.uid === src.weaponUid) : undefined;
   const firstHit = src.kind === 'action' && !src.damageBonusApplied;
   if (src.kind === 'action' && !src.damageBonusApplied) {
     src.damageBonusApplied = true;
@@ -136,28 +182,127 @@ export function dealDamage(s: GameState, amount: number, src: EffectSource): voi
       total += def.damage ?? 0;
       log(s, `${def.name}: +${def.damage} de daño.`, 'good');
     }
-    if (has(s, 'ult-laurie') && s.fg.zone === s.killer.zone) {
+    if (has(s, 'ult-laurie') && enemyZones(s).includes(s.fg.zone)) {
       total++;
       log(s, 'Habilidad Definitiva de Laurie: +1 de daño.', 'good');
     }
   }
-  const weaponIsBat = src.weaponUid && s.fg.items.find((i) => i.uid === src.weaponUid && i.id === 'bate-metalico');
-  damageKiller(s, total);
-  if (!s.outcome) afterFgDamage(s, total, weapon && firstHit ? weapon.uid : undefined, weaponDef?.custom);
-  if (weaponIsBat && s.killer.minors.length && !s.outcome) {
-    push(
-      s,
-      choice(
-        'Bate metálico: ¿descartas un Poder Oscuro Menor?',
-        [
-          ...s.killer.minors.map((m) => ({ id: m.id, label: `Descartar ${horrorDef(s, m.id).name}` })),
-          { id: 'no', label: 'No' },
-        ],
-        { kind: 'custom', id: 'bat-discard-minor' },
-      ),
-    );
+  const weaponDef = weapon ? itemDef(s, weapon.id) : undefined;
+  const ctx: AttackCtx = {
+    total,
+    ...(weapon && firstHit ? { weaponUid: weapon.uid } : {}),
+    ...(weaponDef ? { weaponId: weaponDef.id } : {}),
+    ...(weaponDef?.custom ? { weaponCustom: weaponDef.custom } : {}),
+    firstHit,
+    ...(src.target ? { forced: src.target } : {}),
+  };
+  chooseAttackTarget(s, ctx, src);
+}
+
+function chooseAttackTarget(s: GameState, ctx: AttackCtx, src: EffectSource): void {
+  const all = attackCandidates(s, src);
+  const forced = ctx.forced ? all.find((c) => c.id === ctx.forced) : undefined;
+  const candidates = forced ? [forced] : all;
+  // Cinturón/Bandolera de cuchillos: el daño se reparte punto a punto entre los Enemigos a su alcance.
+  const split = ctx.weaponCustom === 'item-knife-belt' && ctx.total > 1 && candidates.length > 1;
+  if (!candidates.length) return hitEnemy(s, 'killer', ctx);
+  if (candidates.length === 1 && !split) return hitEnemy(s, candidates[0]!.id, ctx);
+  push(
+    s,
+    choice(
+      split ? `Cuchillos: reparte el daño (quedan ${ctx.total} puntos). ¿A quién va el primero?` : `¿A quién atacas? (${ctx.total} de daño)`,
+      candidates,
+      { kind: 'custom', id: 'fg-attack-target', data: { ctx: { ...ctx }, split, srcWeaponUid: src.weaponUid ?? null } },
+    ),
+  );
+}
+
+registerChoice('fg-attack-target', (s, option, data) => {
+  const ctx = data.ctx as AttackCtx;
+  const src: EffectSource = { kind: 'action', ...(data.srcWeaponUid ? { weaponUid: data.srcWeaponUid as string } : {}) };
+  if (data.split) {
+    const point = { ...ctx, total: 1 };
+    delete point.weaponUid;
+    hitEnemy(s, option, point, true);
+    const left = ctx.total - 1;
+    if (left > 0 && !s.outcome) chooseAttackTarget(s, { ...ctx, total: left, firstHit: false }, src);
+    else finishAttack(s, ctx);
+    return;
+  }
+  hitEnemy(s, option, ctx);
+});
+
+function hitEnemy(s: GameState, key: string, ctx: AttackCtx, partial = false): void {
+  if (s.outcome) return;
+  if (key === 'killer') {
+    damageKiller(s, ctx.total);
+    if (!s.outcome) afterFgDamage(s, ctx.total, ctx.weaponUid, ctx.weaponCustom);
+    if (ctx.weaponCustom === 'item-metal-bat' && s.killer.minors.length && !s.outcome) {
+      push(
+        s,
+        choice(
+          'Bate: ¿descartas un Poder Oscuro Menor?',
+          [
+            ...s.killer.minors.map((m) => ({ id: m.id, label: `Descartar ${horrorDef(s, m.id).name}` })),
+            { id: 'no', label: 'No' },
+          ],
+          { kind: 'custom', id: 'bat-discard-minor' },
+        ),
+      );
+    }
+  } else if (key.startsWith('mz:')) {
+    const zone = key.slice(3);
+    log(s, `¡${ctx.total} de daño a ${minionName(s, true)} en ${zoneName(s, zone)}!`, 'good');
+    damageMinionsAt(s, zone, ctx.total);
+    if (ctx.weaponCustom === 'item-whip') whipMinion(s, zone);
+    if (ctx.weaponUid) {
+      const it = s.fg.items.find((i) => i.uid === ctx.weaponUid);
+      if (it && it.uses !== undefined) spendUse(s, ctx.weaponUid);
+    }
+  } else if (key.startsWith('vz:')) {
+    const zone = key.slice(3);
+    const v = [...victimsIn(s, zone)].filter((x) => x.role !== 'lobo').sort((a, b) => (a.role ? 1 : 0) - (b.role ? 1 : 0))[0];
+    if (v) {
+      log(s, `${fgDef(s).name} ataca a ${victimLabel(v)}.`, 'bad');
+      killVictim(s, v, false);
+    }
+  }
+  if (!partial) finishAttack(s, ctx, key);
+}
+
+/** Efectos al terminar de resolver un ataque con un arma (Hacha arrojadiza, Martillos). */
+function finishAttack(s: GameState, ctx: AttackCtx, key?: string): void {
+  if (!ctx.weaponUid || s.outcome) return;
+  if (ctx.weaponCustom === 'item-throwing-axe') {
+    const zone = key === 'killer' || !key ? s.killer.zone : key.slice(3);
+    if (zone !== s.fg.zone) {
+      log(s, 'Hacha arrojadiza: la lanzas y la descartas.', 'info');
+      discardItem(s, ctx.weaponUid);
+    }
+  }
+  if (ctx.weaponCustom === 'item-hammer' || ctx.weaponCustom === 'item-hammer-charlie') {
+    log(s, 'El martillo te pasa factura: pierdes 1 Vida y termina la fase de Acción.', 'bad');
+    damageFG(s, 1);
+    if (!s.outcome && s.phase === 'action') s.mods.actionPhaseEnding = true;
   }
 }
+
+/** Látigo contra Esbirros: puedes moverlos 1 espacio. */
+function whipMinion(s: GameState, zone: string): void {
+  const alive = minionsAt(s, zone);
+  if (!alive.length) return;
+  const options = neighbors(s, zone, 'enemy').map((z) => ({ id: `${zone}>${z}`, label: `Mover ${minionName(s)} a ${zoneName(s, z)}` }));
+  push(s, choice('Látigo: ¿mueves un Esbirro 1 espacio?', [...options, { id: 'no', label: 'No' }], { kind: 'custom', id: 'whip-minion' }));
+}
+
+registerChoice('whip-minion', (s, option) => {
+  if (option === 'no') return;
+  const [from, to] = option.split('>') as [string, string];
+  const m = minionsAt(s, from)[0];
+  if (!m) return;
+  m.zone = to;
+  log(s, `El Látigo arrastra ${minionName(s)} a ${zoneName(s, to)}.`, 'good');
+});
 
 /** Efectos que se disparan al hacer daño al Asesino (objetos de Sacred Groves, Barbara). */
 function afterFgDamage(s: GameState, total: number, weaponUid: string | undefined, weaponCustom: string | undefined): void {
@@ -204,6 +349,23 @@ export function gainActionCard(s: GameState, id: CardId): void {
   if (s.fg.hand.length > 10) push(s, { t: 'discardDown' });
 }
 
+/** Zappo: puedes jugar Buscar hasta a 2 espacios de una zona de Búsqueda. */
+export function zappoSearchZones(s: GameState): string[] {
+  if (!s.fg.items.some((i) => i.id === 'zappo')) return [];
+  const dist = distances(s, s.fg.zone, 'fg');
+  return locationDef(s).itemDecks.filter((z) => (s.itemDecks[z]?.length ?? 0) > 0 && (dist.get(z) ?? 99) <= 2);
+}
+
+function searchFromAfar(s: GameState, draw: 1 | 2): void {
+  const zones = zappoSearchZones(s);
+  if (!zones.length) return log(s, 'No estás en una zona de Búsqueda.');
+  if (zones.length === 1) return push(s, { t: 'search', zone: zones[0]!, drawn: [], draw, zappo: true });
+  push(s, choice('Zappo busca por ti: ¿en qué mazo?', zones.map((z) => ({ id: z, label: zoneName(s, z) })), { kind: 'custom', id: 'zappo-search', data: { draw } }));
+}
+registerChoice('zappo-search', (s, option, data) => {
+  push(s, { t: 'search', zone: option, drawn: [], draw: data.draw as 1 | 2, zappo: true });
+});
+
 export function drawHorror(s: GameState): void {
   const id = s.horrorDeck.shift();
   if (!id) return log(s, 'El mazo de Horror está vacío.');
@@ -221,6 +383,7 @@ export function drawEvent(s: GameState): void {
 /** Coge un Objeto del mundo y lo da a la Chica Final. */
 export function gainItem(s: GameState, id: CardId): void {
   const def = itemDef(s, id);
+  if (def.trap) return resolveTrapItem(s, id);
   const inst = { uid: `i${s.nextUid++}`, id, inHands: false, ...(def.uses ? { uses: def.uses } : {}) };
   // Si caben en las manos, se colocan ahí; si no, va a la mochila y el jugador reorganiza.
   const fits = def.hands > 0 && handsUsed(s) + def.hands <= 2;
@@ -328,7 +491,9 @@ function runCustomEffect(s: GameState, id: string, src: EffectSource): void {
       return;
     }
     default: {
-      const [name, arg] = id.split(':') as [string, string | undefined];
+      const at = id.indexOf(':');
+      const name = at < 0 ? id : id.slice(0, at);
+      const arg = at < 0 ? undefined : id.slice(at + 1);
       const fn = customEffects.get(name);
       if (!fn) throw new RuleError(`Efecto especial sin implementar: ${id} (${src.kind})`);
       return fn(s, arg, src);
@@ -336,10 +501,6 @@ function runCustomEffect(s: GameState, id: string, src: EffectSource): void {
   }
 }
 
-// Efectos únicos de otras películas (definidos en sus módulos). Ids con parámetro: "nombre:arg".
-type CustomEffect = (s: GameState, arg: string | undefined, src: EffectSource) => void;
-const customEffects = new Map<string, CustomEffect>();
-export const registerEffect = (id: string, fn: CustomEffect) => customEffects.set(id, fn);
 
 export function teleportKiller(s: GameState, zone: ZoneId): void {
   s.killer.zone = zone;
@@ -376,11 +537,6 @@ export function resolveChoice(s: GameState, then: ChoiceHandler, option: string)
       return resolveCustomChoice(s, then.id, option, data);
   }
 }
-
-// Elecciones de objetos, eventos y fases (definidas en sus módulos).
-type CustomChoice = (s: GameState, option: string, data: Record<string, unknown>) => void;
-const customChoices = new Map<string, CustomChoice>();
-export const registerChoice = (id: string, fn: CustomChoice) => customChoices.set(id, fn);
 
 function resolveCustomChoice(s: GameState, id: string, option: string, data: Record<string, unknown>): void {
   const fn = customChoices.get(id);

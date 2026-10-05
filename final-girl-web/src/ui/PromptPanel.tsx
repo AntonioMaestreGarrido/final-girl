@@ -14,7 +14,11 @@ interface Props {
   setSelectedVictims: (ids: string[]) => void;
 }
 
-const roleName = (role?: string) => (role === 'novio' ? 'Novio' : role === 'novia' ? 'Novia' : role === 'maldita' ? 'La Maldita' : 'Víctima');
+const ROLE_NAMES: Record<string, string> = {
+  novio: 'Novio', novia: 'Novia', maldita: 'La Maldita', super: 'Super Turista', hombre: 'Hombre Sagrado', guia: 'Guía Turístico',
+  prometido: 'Prometido', hermana: 'Hermana', lobo: 'Hombre Lobo',
+};
+const roleName = (role?: string) => (role ? (ROLE_NAMES[role] ?? 'Víctima') : 'Víctima');
 
 export function PromptPanel(props: Props) {
   const { state } = props;
@@ -66,6 +70,7 @@ function PromptBody({ state, send, prompt: p, selectedVictims, setSelectedVictim
               ))}
             </p>
           )}
+          {!p.to.length && <p className="hint">No tienes adónde ir: la trampa te sujeta la pierna.</p>}
           <div className="buttons actions">
             {p.to.map((z) => (
               <button key={z} className="btn" onClick={() => send({ type: 'moveTo', zone: z, bring: selectedVictims })}>{locationDef(state).zones.find((x) => x.id === z)!.label}</button>
@@ -80,7 +85,7 @@ function PromptBody({ state, send, prompt: p, selectedVictims, setSelectedVictim
     case 'react':
       return (
         <div className="prompt-block danger">
-          <h4>¡{killerDef(state).name} te ataca! {p.damage} de daño.</h4>
+          <h4>¡{attackerName(state)} te ataca! {p.damage} de daño.</h4>
           <div className="buttons actions">
             {p.cards.map((c) => (
               <button key={c} className="btn" onClick={() => send({ type: 'react', cardId: c })}>Reaccionar: {actionDef(c).name}</button>
@@ -105,6 +110,16 @@ function PromptBody({ state, send, prompt: p, selectedVictims, setSelectedVictim
 
 // ---------------------------------------------------------------- mano
 
+/** Quién te está atacando ahora (el Asesino, un Esbirro, una Víctima-Marioneta o el Hombre Lobo). */
+function attackerName(state: GameState): string {
+  const atk = [...state.stack].reverse().find((t) => t.t === 'attackFG');
+  const by = atk && atk.t === 'attackFG' ? atk.by : undefined;
+  if (by === 'wolf') return 'El Hombre Lobo';
+  if (by?.startsWith('m:')) return `Una ${killerDef(state).minion?.name ?? 'Marioneta'}`;
+  if (by?.startsWith('v:')) return 'Una Víctima-Marioneta';
+  return killerDef(state).name;
+}
+
 function Hand({ state, playable = [], selected = [], onCard }: { state: GameState; playable?: CardId[]; selected?: number[]; onCard?: (i: number) => void }) {
   return (
     <div className="hand">
@@ -127,7 +142,7 @@ function MainPrompt({ state, send, prompt: p }: { state: GameState; send: Props[
   const [selected, setSelected] = useState<number[]>([]);
   const [weaponFor, setWeaponFor] = useState<CardId | null>(null);
   const playable = p.playable.map((x) => x.cardId);
-  const sameZone = state.fg.zone === state.killer.zone;
+  const sameZone = state.fg.zone === state.killer.zone || state.minions.some((m) => m.zone === state.fg.zone) || state.victims.some((v) => v.zone === state.fg.zone && v.role !== 'lobo');
 
   const onCard = (i: number) => {
     const c = state.fg.hand[i]!;
@@ -164,7 +179,7 @@ function MainPrompt({ state, send, prompt: p }: { state: GameState; send: Props[
             {p.itemActions.map((a) => (
               <button key={`${a.uid}-${a.action}`} className="btn" onClick={() => send({ type: 'useItem', uid: a.uid, action: a.action })}>{a.label}</button>
             ))}
-            {p.ultimate && <button className="btn good" onClick={() => send({ type: 'ultimate' })}>Habilidad Definitiva: ir a por el Asesino</button>}
+            {p.ultimate && <button className="btn good" onClick={() => send({ type: 'ultimate' })}>{p.ultimateLabel ?? 'Habilidad Definitiva: ir a por el Asesino'}</button>}
             {state.fg.hand.length > 0 && <button className="btn ghost" onClick={() => setMode('discard')}>Descartar por Tiempo…</button>}
             <button className="btn primary" onClick={() => send({ type: 'endActionPhase' })}>Terminar fase de Acción</button>
           </>
@@ -184,7 +199,7 @@ function MainPrompt({ state, send, prompt: p }: { state: GameState; send: Props[
 // ---------------------------------------------------------------- tiradas
 
 function RollPrompt({ state, send, prompt: p }: { state: GameState; send: Props['send']; prompt: Extract<Prompt, { type: 'roll' }> }) {
-  const [mode, setMode] = useState<'none' | 'convert' | 'closeCall' | 'lucky'>('none');
+  const [mode, setMode] = useState<'none' | 'convert' | 'closeCall' | 'lucky' | 'sister'>('none');
   const [die, setDie] = useState<number | null>(null);
   const [cards, setCards] = useState<number[]>([]);
   const [luckySel, setLuckySel] = useState<number[]>([]);
@@ -196,6 +211,9 @@ function RollPrompt({ state, send, prompt: p }: { state: GameState; send: Props[
   const clickDie = (i: number) => {
     if (mode === 'closeCall') {
       send({ type: 'closeCall', die: i });
+      setMode('none');
+    } else if (mode === 'sister') {
+      send({ type: 'sisterReroll', die: i });
       setMode('none');
     } else if (mode === 'lucky') setLuckySel((s) => (s.includes(i) ? s.filter((x) => x !== i) : [...s, i]));
     else if (partial(p.dice[i]!, i) && state.fg.hand.length >= 2) {
@@ -224,6 +242,7 @@ function RollPrompt({ state, send, prompt: p }: { state: GameState; send: Props[
       )}
       {mode === 'closeCall' && <p className="hint">Haz clic en el dado que quieres repetir.</p>}
       {mode === 'lucky' && <p className="hint">Elige los dados que repites con los Dados de la suerte.</p>}
+      {mode === 'sister' && <p className="hint">Haz clic en el dado que tu Hermana te deja repetir (−2 Tiempo).</p>}
       <div className="buttons actions">
         {mode === 'convert' && (
           <button className="btn primary" disabled={cards.length !== 2} onClick={() => { send({ type: 'convertPartial', die: die!, discard: [state.fg.hand[cards[0]!]!, state.fg.hand[cards[1]!]!] }); setMode('none'); setDie(null); }}>Convertir</button>
@@ -236,6 +255,7 @@ function RollPrompt({ state, send, prompt: p }: { state: GameState; send: Props[
           </>
         )}
         {mode === 'none' && p.canLuckyDice && <button className="btn" onClick={() => setMode('lucky')}>Dados de la suerte</button>}
+        {mode === 'none' && p.canSister && <button className="btn" onClick={() => setMode('sister')}>Tu Hermana: repetir 1 dado (2 Tiempo)</button>}
         {mode !== 'none' && <button className="btn ghost" onClick={() => { setMode('none'); setDie(null); setLuckySel([]); }}>Cancelar</button>}
         {mode === 'none' && <button className="btn primary" onClick={() => send({ type: 'confirmRoll' })}>Aceptar resultado</button>}
       </div>
@@ -284,7 +304,7 @@ function SearchPrompt({ state, send, prompt: p }: { state: GameState; send: Prop
   const [keep, setKeep] = useState(0);
   return (
     <div className="prompt-block">
-      <h4>Buscar: quédate con uno de los dos Objetos.</h4>
+      <h4>Buscar: quédate con uno de {p.drawn.length === 2 ? 'los dos' : `los ${p.drawn.length}`} Objetos.</h4>
       <div className="card-row">
         {p.drawn.map((id, i) => (
           <div key={i} className={`slot pickable ${keep === i ? 'selected' : ''}`}>
@@ -293,8 +313,8 @@ function SearchPrompt({ state, send, prompt: p }: { state: GameState; send: Prop
         ))}
       </div>
       <div className="buttons actions">
-        <button className="btn primary" onClick={() => send({ type: 'searchPick', keep, otherTo: 'top' })}>Quedármelo; el otro encima bocarriba</button>
-        <button className="btn primary" onClick={() => send({ type: 'searchPick', keep, otherTo: 'bottom' })}>Quedármelo; el otro debajo bocabajo</button>
+        <button className="btn primary" onClick={() => send({ type: 'searchPick', keep, otherTo: 'top' })}>Quedármelo; {p.drawn.length === 2 ? 'el otro' : 'los otros'} encima bocarriba</button>
+        <button className="btn primary" onClick={() => send({ type: 'searchPick', keep, otherTo: 'bottom' })}>Quedármelo; {p.drawn.length === 2 ? 'el otro' : 'los otros'} debajo bocabajo</button>
       </div>
     </div>
   );

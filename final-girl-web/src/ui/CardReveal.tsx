@@ -43,9 +43,8 @@ function faceOf(state: GameState, c: RevealedCard): Face {
   }
 }
 
-/** Duración del reverso antes de girar la carta, y de la carta ya girada antes de cerrarse sola. */
+/** Duración del reverso antes de girar la carta; después espera a que el jugador haga clic. */
 const FLIP_AT = 700;
-const CLOSE_AT = 3600;
 
 /** Carta revelada en el centro de la pantalla: primero el reverso, luego gira y muestra el texto debajo. */
 export function CardReveal({ state, card, onClose }: { state: GameState; card: RevealedCard; onClose: () => void }) {
@@ -53,13 +52,8 @@ export function CardReveal({ state, card, onClose }: { state: GameState; card: R
   const face = faceOf(state, card);
 
   useEffect(() => {
-    const a = window.setTimeout(() => setFlipped(true), FLIP_AT);
-    const b = window.setTimeout(onClose, CLOSE_AT);
-    return () => {
-      window.clearTimeout(a);
-      window.clearTimeout(b);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const t = window.setTimeout(() => setFlipped(true), FLIP_AT);
+    return () => window.clearTimeout(t);
   }, []);
 
   const text = stripIcons(face.text);
@@ -86,6 +80,7 @@ export function CardReveal({ state, card, onClose }: { state: GameState; card: R
           <b>{face.name}</b>
           {text && <p>{text}</p>}
         </div>
+        <small className={`card-reveal-hint ${flipped ? 'visible' : ''}`}>Haz clic para continuar</small>
       </div>
     </div>
   );

@@ -59,11 +59,24 @@ export function createGame(config: GameConfig): GameState {
 
   // Objetos: tres montones de cuatro con la carta superior bocarriba.
   const bonus = config.bonusItems ? BONUS_ITEMS.filter((b) => b.onlyFor === fg.id).map((b) => b.id) : [];
-  const items = shuffle(rng, [...location.items.map((i) => i.id), ...bonus]);
+  const traps = location.items.filter((i) => i.trap).map((i) => i.id);
+  const items = shuffle(rng, [...location.items.filter((i) => !i.trap).map((i) => i.id), ...bonus]);
   const itemDecks: GameState['itemDecks'] = {};
-  location.itemDecks.forEach((zone, n) => {
-    itemDecks[zone] = items.slice(n * ITEM_DECK_SIZE, (n + 1) * ITEM_DECK_SIZE).map((id, i) => ({ id, faceUp: i === 0 }));
-  });
+  if (traps.length) {
+    // Carnival of Blood: cada mazo lleva 2 Objetos y 1 Objeto Trampa barajados, con 1 Objeto más bocarriba encima.
+    const hidden = ITEM_DECK_SIZE - 1;
+    const trapOrder = shuffle(rng, traps);
+    location.itemDecks.forEach((zone, n) => {
+      const open = items[n * ITEM_DECK_SIZE]!;
+      const rest = items.slice(n * ITEM_DECK_SIZE + 1, n * ITEM_DECK_SIZE + hidden);
+      const under = shuffle(rng, [...rest, trapOrder[n % trapOrder.length]!]);
+      itemDecks[zone] = [{ id: open, faceUp: true }, ...under.map((id) => ({ id, faceUp: false }))];
+    });
+  } else {
+    location.itemDecks.forEach((zone, n) => {
+      itemDecks[zone] = items.slice(n * ITEM_DECK_SIZE, (n + 1) * ITEM_DECK_SIZE).map((id, i) => ({ id, faceUp: i === 0 }));
+    });
+  }
 
   // Carta de Preparación.
   const setup = config.setupId ? location.setups.find((x) => x.id === config.setupId)! : pick(rng, location.setups);
@@ -106,6 +119,8 @@ export function createGame(config: GameConfig): GameState {
     },
     victims,
     dead: [],
+    minions: [],
+    minionPool: { ready: killer.minion ? killer.minion.tokens.map((_, i) => `m${i + 1}`) : [], exhausted: [] },
     victimPool: VICTIM_POOL - victims.length,
     horrorDeck,
     horrorDiscard: [],
@@ -306,5 +321,7 @@ export function deserialize(json: string): Game {
   s.mods.usedThisTurn ??= [];
   s.mods.damageTaken ??= 0;
   s.mods.damageMark ??= 0;
+  s.minions ??= [];
+  s.minionPool ??= { ready: [], exhausted: [] };
   return { state: s, history: [] };
 }

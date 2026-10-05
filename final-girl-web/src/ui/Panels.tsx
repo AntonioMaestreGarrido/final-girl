@@ -38,6 +38,9 @@ function HealthBar({ hp, max, token }: { hp: number; max: number; token: 'black'
   );
 }
 
+const has2 = (state: GameState, custom: string) =>
+  state.killer.darkPowers.some((dp) => dp.revealed && killerDef(state).darkPowers.find((d) => d.id === dp.id)?.custom === custom);
+
 export function KillerPanel({ state }: { state: GameState }) {
   const k = killerDef(state);
   const row = killerRow(state);
@@ -64,10 +67,12 @@ export function KillerPanel({ state }: { state: GameState }) {
         <div className="slot art-slot">
           <small className="art-label">Gran Final</small>
           <CardImg src={state.killer.finaleRevealed ? finale.image : k.finaleBack} alt={state.killer.finaleRevealed ? finale.name : 'Gran Final (oculto)'} className="wide" caption={state.killer.finaleRevealed ? `Gran Final: ${finale.name}
-Acción del Asesino cada turno: ${killerActionText(finale.finalAction)}${finale.text ? `
+${finale.minionAction ? `Acción de Esbirro (primero): ${killerActionText(finale.minionAction)}
+` : ''}Acción del Asesino cada turno: ${killerActionText(finale.finalAction)}${finale.text ? `
 ${finale.text}` : ''}${locationDef(state).finaleToken ? `
 ${locationDef(state).finaleToken!.text}` : ''}` : `Gran Final (boca abajo hasta que se acabe el mazo de Horror)
-Acción del Asesino cada turno: ${killerActionText(k.initialAction)}`} />
+${k.initialMinionAction ? `Acción de Esbirro (primero): ${killerActionText(k.initialMinionAction)}
+` : ''}Acción del Asesino cada turno: ${killerActionText(k.initialAction)}`} />
         </div>
         {state.killer.darkPowers.map((dp) => {
           const def = k.darkPowers.find((d) => d.id === dp.id)!;
@@ -80,6 +85,21 @@ ${def.text}` : 'Poder Oscuro boca abajo: se revela al llegar a su casilla de Sed
           );
         })}
       </div>
+      {k.minion && (
+        <div className="minions-panel">
+          <CardImg src={k.minion.reference} alt={`Carta de ${k.minion.plural}`} className="minion-ref" caption={`${k.minion.plural}
+${k.minion.text}`} />
+          <div>
+            <div className="track-label">{k.minion.plural}</div>
+            <div className="minion-tokens" data-tip={`Listas: aparecen una por fase del Asesino hasta el Gran Final. Agotadas: destruidas; vuelven a Listo al aparecer la siguiente. En el tablero: ${state.minions.length}.`}>
+              <span>Listas <b>{state.minionPool.ready.length}</b></span>
+              <span>En el tablero <b>{state.minions.length}</b></span>
+              <span>Agotadas <b>{state.minionPool.exhausted.length}</b></span>
+            </div>
+            <small className="muted">1 Vida · Ataque {k.minion.attack}{has2(state, 'dp-weapon-graft') ? '+1' : ''} · Movimiento {row.move} · terminan a ≤2 de {k.name}</small>
+          </div>
+        </div>
+      )}
       {state.killer.minors.length > 0 && (
         <div className="card-row">
           {state.killer.minors.map((m) => (
@@ -108,6 +128,12 @@ export function FinalGirlPanel({ state }: { state: GameState }) {
     <section className="panel fg-panel">
       <h3>{fg.name}</h3>
       <HealthBar hp={state.fg.health.hp} max={state.fg.health.max} token={state.fg.health.token} />
+      {(state.fg.legTrap || state.fg.cobra) && (
+        <div className="fg-status">
+          {state.fg.legTrap && <span className="status bad" data-tip="Trampa para osos en la pierna: no puedes moverte hasta que gastes 2 Tiempo en quitártela (botón de la fase de Acción).">⛓ Trampa en la pierna</span>}
+          {state.fg.cobra && <span className="status bad" data-tip="Cobra oculta: pierdes 1 Vida en cada Mantenimiento. La próxima vez que recuperes Vida, se descarta en su lugar.">🐍 Cobra oculta</span>}
+        </div>
+      )}
 
       <div className="track-label">Terror</div>
       <div className="terror-track">

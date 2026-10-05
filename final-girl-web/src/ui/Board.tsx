@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import type { Zone, ZoneId } from '../content/types';
 import { fgDef, itemDef, killerDef, killerRow, locationDef, type GameState } from '../engine';
 import { asset } from './asset';
@@ -21,6 +22,9 @@ const ROLE_TEXT = {
   super: 'El Super Turista: el Asesino siempre lo elige como objetivo. Si lo salvas, reduce una Ira en 4; si muere, la Ira Divina sube 4.',
   hombre: 'El Hombre Sagrado: no te sigue y cada Mantenimiento avanza hacia el Asesino. Si se encuentran estando tú allí, reduces una Ira a 4; si no, las Iras suben 10 en total.',
   guia: 'El Guía Turístico: mientras esté contigo, una vez por turno puedes moverte 1 espacio extra. Si muere, la Ira Divina sube 6.',
+  prometido: 'Tu Prometido: si un Enemigo quisiera entrar en tu espacio mientras él está allí, muere en tu lugar y el Enemigo se queda donde está. Si muere por una trampa, +5 Terror.',
+  hermana: 'Tu Hermana: mientras esté en tu espacio puedes gastar 2 Tiempo para volver a lanzar un dado. Si muere, +2 Sed de Sangre.',
+  lobo: 'El Hombre Lobo: no te sigue y no puede ser apuntado, salvado ni asesinado. En el Mantenimiento entra en pánico y hace 2 de daño a un objetivo de su espacio (Víctima ▶ tú ▶ Esbirro ▶ Asesino).',
 } as const;
 
 /** Carta asociada a cada ficha del tablero (para la vista ampliada). */
@@ -33,6 +37,8 @@ const TOKEN_CARD: Record<string, { kind: 'item' | 'event'; id: string }> = {
   cerrado: { kind: 'event', id: 'cerrado-por-mantenimiento' },
   'fuego-y-azufre': { kind: 'event', id: 'fuego-y-azufre' },
   'suelo-sagrado': { kind: 'event', id: 'suelo-sagrado' },
+  'carro-de-golf': { kind: 'event', id: 'transporte-de-empleados' },
+  calavera: { kind: 'event', id: 'no-es-real' },
 };
 
 export function Board({ state, targets, onZone, selectedVictims = [], onVictim }: Props) {
@@ -118,6 +124,7 @@ export function Board({ state, targets, onZone, selectedVictims = [], onVictim }
         ];
       })}
 
+      <Minions state={state} />
       <Figure state={state} kind="killer" onClick={(z) => targets.includes(z) && onZone?.(z)} />
       <Figure state={state} kind="fg" onClick={(z) => targets.includes(z) && onZone?.(z)} />
     </div>
@@ -144,7 +151,9 @@ function BoardToken({ state, tokenId, zone }: { state: GameState; tokenId: strin
   const loc = locationDef(state);
   const card = TOKEN_CARD[tokenId];
   const def = card ? (card.kind === 'item' ? itemDef(state, card.id) : loc.events.find((e) => e.id === card.id)) : undefined;
-  const hover = useHoverCard(def?.image, def ? `Ficha de ${def.name} en ${zone.label}
+  const info = loc.tokenInfo?.[tokenId];
+  const hover = useHoverCard(info?.image ?? def?.image, info ? `${info.text}
+(${zone.label})` : def ? `Ficha de ${def.name} en ${zone.label}
 ${def.text}` : undefined);
   const src = loc.tokens[tokenId];
   if (!src) return null;
@@ -157,6 +166,38 @@ ${def.text}` : undefined);
       {...hover}
     />
   );
+}
+
+/** Esbirros (Marionetas) en el tablero, junto a la figura del Asesino de su zona. */
+function Minions({ state }: { state: GameState }) {
+  const k = killerDef(state);
+  const def = k.minion;
+  const loc = locationDef(state);
+  if (!def) return null;
+  return (
+    <>
+      {state.minions.map((m, i) => {
+        const z = loc.zones.find((x) => x.id === m.zone)!;
+        const idx = state.minions.filter((x, j) => j < i && x.zone === m.zone).length;
+        const slot = Number(m.id.slice(1)) - 1;
+        return (
+          <MinionPiece
+            key={m.id}
+            def={def}
+            token={def.tokens[slot] ?? def.tokens[0]!}
+            style={{ left: `calc(${z.pos.x}% - ${3.4 + idx * 2.4}%)`, top: `calc(${z.pos.y}% - 2.6%)` }}
+            caption={`${def.name} en ${z.label} · Vida ${m.hp} · Ataque ${def.attack} · Movimiento ${killerRow(state).move} (el de ${k.name})
+${def.text}`}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+function MinionPiece({ def, token, style, caption }: { def: NonNullable<ReturnType<typeof killerDef>['minion']>; token: string; style: CSSProperties; caption: string }) {
+  const hover = useHoverCard(def.reference, caption);
+  return <img className="minion" src={asset(token)} alt={def.name} draggable={false} style={style} {...hover} />;
 }
 
 function Figure({ state, kind, onClick }: { state: GameState; kind: 'fg' | 'killer'; onClick: (zone: ZoneId) => void }) {
