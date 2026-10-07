@@ -630,6 +630,362 @@ def carnival_portraits() -> None:
     save_webp(fit_long_side(board.crop((0, round(board.height * 0.19), board.width, board.height)), 1200), cb / "select.webp")
 
 
+# ---------------------------------------------------------------- The Haunting of Creech Manor
+
+CM = SRC / "FINAL GIRL  (HAUNTING OF CREECH MANOR [ES][MAQ] Corregido"
+
+
+def poltergeist() -> None:
+    out = OUT / "killers" / "poltergeist"
+    extract_cards(CM / "Cartas" / "Terror Poltergeist.pdf", out / "horror", {
+        "carolyn-donde-estas": (13, 0),
+        "las-sombras-se-acercan": (16, 0),
+        "todo-alrededor-estaba-volando": (18, 0),
+        "el-suelo-esta-temblando": (20, 0),
+        "maldad-imparable": (22, 0),
+        "de-donde-ha-salido-esta-tormenta": (28, 0),
+        "nada-es-lo-que-parece": (29, 0),
+        "tengo-que-matarte": (30, 0),
+        "forma-corporea": (31, 0),
+        "ese-payaso-se-ha-movido": (32, 0),
+        "fuerzas-nunca-vistas": (33, 0),
+        "confusion-psiquica": (34, 0),
+        "back": (14, 0),
+    })
+    extract_cards(CM / "Cartas" / "Finale.pdf", out / "finale", {
+        "nada-es-facil": (13, CW),
+        "asalto-implacable": (15, CW),
+        "pronto-estara-perdida": (16, CW),
+        "back": (14, CW),
+    })
+    extract_cards(CM / "Cartas" / "Dark Power.pdf", out / "dark-power", {
+        "eterna-desesperacion": (13, CW),
+        "barrera-invisible": (15, CW),
+        "rafaga-de-viento": (16, CW),
+        "olvidando-algo": (17, CW),
+        "back": (14, CW),
+    })
+    print("Tablero y portada del Poltergeist")
+    extract_image(CM / "Tableros" / "POLTERGEIST.jpg", out / "board.webp", 2000, crop_white=False)
+    extract_image(CM / "Box covers" / "Poltergeist front.jpg", out / "cover.webp", 1400)
+
+
+def creech_manor() -> None:
+    out = OUT / "locations" / "creech-manor"
+    extract_cards(CM / "Cartas" / "Terror Creech Manor.pdf", out / "horror", {
+        "es-falso": (13, 0),
+        "algo-viene-a-traves-de-la-pared": (15, 0),
+        "ventanas-y-puertas-cerradas": (16, 0),
+        "esta-rota": (17, 0),
+        "algo-impio-paso": (18, 0),
+        "voces-oigo-voces": (19, 0),
+        "que-viene-que-viene": (20, 0),
+        "los-arboles-estan-vivos": (21, 0),
+        "back": (14, 0),
+    })
+    extract_cards(CM / "Cartas" / "Eventos.pdf", out / "events", {
+        "rescate-en-helicoptero": (13, CW),
+        "nadie-vuelve": (15, CW),
+        "cazadores-de-fantasmas": (16, CW),
+        "congelado-por-el-miedo": (17, CW),
+        "no-tengo-miedo-de-ningun-fantasma": (18, CW),
+        "empujados-hasta-el-borde": (19, CW),
+        "fuera-luces": (20, CW),
+        "victimas-pegajosas": (21, CW),
+        "coraje-liquido": (22, CW),
+        "la-curiosidad-mato-a-la-gente": (23, CW),
+        "back": (14, CW),
+    })
+    extract_cards(CM / "Cartas" / "Setup.pdf", out / "setup", {
+        "extranos-trofeos": (13, 0),
+        "la-escalera": (15, 0),
+        "dancing-queen": (16, 0),
+        "la-zona-muerta": (17, 0),
+        "creepshow": (18, 0),
+        "back": (14, 0),
+    })
+    extract_cards(CM / "Cartas" / "Objetos.pdf", out / "items", {
+        "dado-de-la-suerte": (13, 0),
+        "candado": (15, 0),
+        "lista-de-cosas": (16, 0),
+        "kit-de-primeros-auxilios": (17, 0),
+        "pata-de-conejo": (18, 0),
+        "daga-ritual": (19, 0),
+        "texto-antiguo": (20, 0),
+        "linterna": (21, 0),
+        "mapa": (22, 0),
+        "carolyn": (23, 0),
+        "mr-floppy": (24, 0),
+        "back": (14, 0),
+    })
+    extract_cards(CM / "Cartas" / "Objetos 2.pdf", out / "items", {
+        "escalera-de-cuerda": (13, 0),
+        "vela": (15, 0),
+        "cuchillo": (16, 0),
+        "pildoras-misteriosas": (17, 0),
+        "rifle": (18, 0),
+        "crucifijo": (19, 0),
+        "viejo-revolver": (20, 0),
+        "tapadera": (21, 0),
+        "bebida-energetica": (22, 0),
+    })
+    extract_tokens(render_page_image(CM / "Tokens" / "Tokens.pdf", 1), out / "tokens", {
+        "helicoptero": (141, 120, 104),
+        "calavera": (422, 120, 104),
+        "escalera-rota": (141, 415, 104),
+        "escalera-de-cuerda": (422, 418, 104),
+        "candado": (422, 714, 104),
+    })
+    print("Tablero y portada de Creech Manor")
+    extract_image(CM / "Tableros" / "CREECH MANOR.jpg", out / "board.webp", 2400, crop_white=False)
+    extract_image(CM / "Box covers" / "Creech Manor.jpg", out / "cover.webp", 1400)
+
+
+def render_page_image(pdf: Path, page: int) -> Path:
+    """Extrae la imagen principal de una página de PDF a un PNG temporal."""
+    import tempfile
+    doc = pymupdf.open(pdf)
+    xref = doc[page].get_images(full=True)[0][0]
+    tmp = Path(tempfile.gettempdir()) / f"{pdf.stem}-{page}.png"
+    pdf_image(doc, xref).convert("RGB").save(tmp)
+    return tmp
+
+
+def creech_final_girls() -> None:
+    out = OUT / "final-girls"
+    extract_cards(CM / "Cartas" / "Final Girls.pdf", out, {
+        "alice-ultimate": (13, CW),
+        "alice": (14, CW),
+        "selena-ultimate": (15, CW),
+        "selena": (16, CW),
+    })
+    extract_cards(CM / "Cartas" / "Bonus.pdf", out / "bonus-items", {
+        "linterna-de-selena": (13, 0),
+        "rifle-de-alice": (17, 0),
+    })
+
+
+def creech_portraits() -> None:
+    print("Tokens y selección de Creech Manor")
+    fg = OUT / "final-girls"
+    portrait_token(fg / "alice.webp", fg / "alice-token.webp", 715, 300, 175, (245, 245, 245))
+    portrait_token(fg / "selena.webp", fg / "selena-token.webp", 765, 272, 190, (245, 245, 245))
+    pg = OUT / "killers" / "poltergeist"
+    board = Image.open(pg / "board.webp").convert("RGB")
+    w, h = board.size
+    portrait_token(pg / "board.webp", pg / "token.webp", round(w * 0.4125), round(h * 0.368), round(w * 0.05), (200, 20, 28))
+    save_webp(board.crop((round(w * 0.12), round(h * 0.20), round(w * 0.66), round(h * 0.95))), pg / "select.webp")
+    cm = OUT / "locations" / "creech-manor"
+    board = Image.open(cm / "board.webp").convert("RGB")
+    save_webp(fit_long_side(board.crop((0, round(board.height * 0.19), board.width, board.height)), 1200), cm / "select.webp")
+
+
+# ---------------------------------------------------------------- Frightmare on Maple Lane
+
+ML = SRC / "FINAL GIRL (FRIGHTMARE ON MAPLE LANE) [ES][MAQ]"
+
+
+def dr_fright() -> None:
+    out = OUT / "killers" / "dr-fright"
+    extract_cards(ML / "Terror" / "Dr Firght.pdf", out / "horror", {
+        "acuchillala": (13, 0),
+        "no-puedes-estar-aqui": (15, 0),
+        "coge-tu-crucifijo": (16, 0),
+        "omg-dedos": (17, 0),
+        "mejor-cerrar-la-puerta": (18, 0),
+        "no-sabias-muertos": (19, 0),
+        "mejor-estar-despierta": (20, 0),
+        "tengo-tanto-sueno": (21, 0),
+        "realidad-borrosa": (22, 0),
+        "ewwww": (28, 0),
+        "marcado-para-la-muerte": (29, 0),
+        "si-esto-es-un-sueno": (30, 0),
+        "frankie-viene": (31, 0),
+        "jamas-volver-a-dormir": (32, 0),
+        "sueno-interminable": (33, 0),
+        "busqueda-infernal": (34, 0),
+        "back": (14, 0),
+    })
+    extract_cards(ML / "Finale" / "Finale.pdf", out / "finale", {
+        "deben-morir-todos": (13, CW),
+        "afronta-tu-miedo": (15, CW),
+        "hora-de-morir": (16, CW),
+        "back": (14, CW),
+    })
+    extract_cards(ML / "Dark Power" / "Dark Power.pdf", out / "dark-power", {
+        "asalto-del-tridente": (13, CW),
+        "nunca-realmente-muerto": (15, CW),
+        "frightsadilla-inevitable": (16, CW),
+        "factor-sorpresa": (17, CW),
+        "back": (14, CW),
+    })
+    extract_cards(ML / "Cartas Especiales" / "Cartas Sala de Calderas.pdf", out / "boiler", {
+        "br-1": (13, 0),
+        "br-2": (15, 0),
+        "br-3": (16, 0),
+        "br-4": (17, 0),
+        "back": (14, 0),
+    })
+    extract_cards(ML / "Cartas Especiales" / "Carta Despierta-Dormida.pdf", out / "boiler", {
+        "awake": (13, 0),
+        "asleep": (14, 0),
+    })
+    print("Tablero y portada del Dr. Fright")
+    extract_image(ML / "Boards" / "Dr Fright.jpg", out / "board.webp", 2000, crop_white=False)
+    extract_image(ML / "Box Covers" / "Dr. Fright.jpg", out / "cover.webp", 1400)
+
+
+def maple_lane() -> None:
+    out = OUT / "locations" / "maple-lane"
+    extract_cards(ML / "Terror" / "Maple Lane.pdf", out / "horror", {
+        "dije-no-mires-atras": (13, 0),
+        "carretera-cortada": (15, 0),
+        "todos-vamos-a-morir": (16, 0),
+        "justo-entro-por-el-patio": (17, 0),
+        "golpeados-por-un-coche": (18, 0),
+        "oiste-lo-que-paso": (19, 0),
+        "es-tan-sigiloso": (20, 0),
+        "nos-dijeron-que-nos-escondieramos": (21, 0),
+        "back": (14, 0),
+    })
+    extract_cards(ML / "Eventos" / "Eventos.pdf", out / "events", {
+        "oficial-de-poli": (13, CCW),
+        "fuego": (15, CCW),
+        "zona-en-obras": (16, CCW),
+        "novio": (17, CCW),
+        "los-smalleys": (18, CCW),
+        "que-pasa-por-ahi": (19, CCW),
+        "amables-vecinos": (20, CCW),
+        "fiesta-por-el-barrio": (21, CCW),
+        "esta-lloviendo": (22, CCW),
+        "es-el-4-de-julio": (23, CCW),
+        "back": (14, CCW),
+    })
+    extract_cards(ML / "Setup" / "Setup.pdf", out / "setup", {
+        "un-sitio-tranquilo": (13, 0),
+        "hora-de-juego": (15, 0),
+        "fiesta-en-el-bloque": (16, 0),
+        "venganza": (17, 0),
+        "maple-lane": (18, 0),
+        "back": (14, 0),
+    })
+    extract_cards(ML / "Objetos" / "Objetos.pdf", out / "items", {
+        "rifle": (13, 0),
+        "cuchillo": (15, 0),
+        "tridente": (16, 0),
+        "crucifijo": (17, 0),
+        "tapadera": (18, 0),
+        "dados-de-la-suerte": (19, 0),
+        "arco-de-competicion": (20, 0),
+        "crucifijo-2": (21, 0),
+        "machete": (22, 0),
+        "biblia": (23, 0),
+        "bebida-energetica": (24, 0),
+        "megafono": (25, 0),
+        "bicicleta": (26, 0),
+        "fuegos-artificiales": (27, 0),
+        "trastos": (28, 0),
+        "crucifijo-3": (29, 0),
+        "back": (14, 0),
+    })
+    extract_cards(ML / "Cartas Especiales" / "Carta Accion Convencer.pdf", OUT / "core" / "actions", {
+        "convencer": (13, 0),
+    })
+    tok = ML / "Tokens" / "Tokens.pdf"
+    extract_tokens(render_page_image(tok, 1), out / "tokens", {
+        "trampa-para-tontos": (125, 135, 105),
+        "fuego": (125, 420, 105),
+        "fuegos-artificiales": (410, 420, 105),
+        "bicicleta": (125, 705, 105),
+        "coche-de-policia": (410, 705, 105),
+    })
+    doc = pymupdf.open(tok)
+    for name, xref, spot in (("x", 18, (125, 135, 105)), ("barrera", 16, (125, 705, 105))):
+        import tempfile
+        tmp = Path(tempfile.gettempdir()) / f"ml-{name}.png"
+        pdf_image(doc, xref).convert("RGB").save(tmp)
+        extract_tokens(tmp, out / "tokens", {name: spot})
+    print("Tablero y portada de Maple Lane")
+    extract_image(ML / "Boards" / "Maple Lane.jpg", out / "board.webp", 2400, crop_white=False)
+    extract_image(ML / "Box Covers" / "Maple Lane.jpg", out / "cover.webp", 1400)
+
+
+def maple_final_girls() -> None:
+    out = OUT / "final-girls"
+    extract_cards(ML / "Final Girls" / "Final Girls.pdf", out, {
+        "nancy-ultimate": (13, CW),
+        "nancy": (14, CW),
+        "sheila-ultimate": (15, CW),
+        "sheila": (16, CW),
+    })
+    extract_cards(ML / "Objetos" / "Bonus" / "Bonus.pdf", out / "bonus-items", {
+        "machetes-de-nancy": (14, 0),
+        "cuchillo-de-sheila": (18, 0),
+    })
+
+
+def maple_portraits() -> None:
+    print("Tokens y selección de Frightmare on Maple Lane")
+    fg = OUT / "final-girls"
+    portrait_token(fg / "nancy.webp", fg / "nancy-token.webp", 830, 260, 190, (245, 245, 245))
+    portrait_token(fg / "sheila.webp", fg / "sheila-token.webp", 830, 300, 190, (245, 245, 245))
+    dr = OUT / "killers" / "dr-fright"
+    board = Image.open(dr / "board.webp").convert("RGB")
+    w, h = board.size
+    portrait_token(dr / "board.webp", dr / "token.webp", round(w * 0.46), round(h * 0.352), round(w * 0.058), (200, 20, 28))
+    save_webp(board.crop((round(w * 0.02), round(h * 0.19), round(w * 0.66), round(h * 0.97))), dr / "select.webp")
+    ml = OUT / "locations" / "maple-lane"
+    board = Image.open(ml / "board.webp").convert("RGB")
+    save_webp(fit_long_side(board.crop((0, round(board.height * 0.19), board.width, board.height)), 1200), ml / "select.webp")
+
+
+# ---------------------------------------------------------------- Terror from Above
+
+TA = SRC / "FINAL GIRL (TERROR FROM ABOVE) [ES][MAQ]"
+
+
+def terror_from_above() -> None:
+    out = OUT / "killers" / "birds"
+    extract_cards(TA / "Terror cards" / "Terror cards.pdf", out / "horror", {
+        "de-donde-salen": (13, 0),
+        "es-desesperante": (15, 0),
+        "muro-de-aves": (16, 0),
+        "pajaros-atacando": (17, 0),
+        "intentan-entrar": (23, 0),
+        "back": (14, 0),
+    })
+    extract_cards(TA / "Finale Cards" / "Finale Cards.pdf", out / "finale", {
+        "ataque-de-aves": (13, CW),
+        "insufribles-bichos": (15, CW),
+        "enjambre-interminable": (16, CW),
+        "back": (14, CW),
+    })
+    extract_cards(TA / "Dark Power cards" / "Dark Power.pdf", out / "dark-power", {
+        "estan-esperando-para-atacar": (13, CW),
+        "birdnado": (15, CW),
+        "corre-por-tu-vida": (16, CW),
+        "back": (14, CW),
+    })
+    extract_cards(TA / "Extra cards" / "Extra cards.pdf", out, {
+        "board": (13, 0),
+        "generar-pajaros": (15, 0),
+    })
+    extract_cards(TA / "Final Girl Card+Promo" / "Final Girls.pdf", OUT / "final-girls", {
+        "melanie-ultimate": (13, CCW),
+        "melanie": (14, CW),
+        "paula": (15, CCW),
+        "paula-ultimate": (16, CW),
+    })
+    for name, file in (("bird-1", "Token [Terror From Above] a x3.png"), ("bird-3", "Token [Terror From Above] b x3.png")):
+        extract_tokens(TA / "Tokens" / file, out / "tokens", {name: (155, 190, 90)})
+    extract_image(TA / "Cover" / "FRONT.jpeg", out / "cover.webp", 1400, crop_white=False)
+    extract_image(TA / "Cover" / "FRONT.jpeg", out / "select.webp", 900, crop_white=False)
+    print("Tokens de Paula y Melanie")
+    fg = OUT / "final-girls"
+    portrait_token(fg / "paula.webp", fg / "paula-token.webp", 790, 330, 215, (245, 245, 245))
+    portrait_token(fg / "melanie.webp", fg / "melanie-token.webp", 785, 350, 205, (245, 245, 245))
+
+
 def main() -> None:
     if not SRC.exists():
         sys.exit(f"No encuentro el material original en {SRC}")
@@ -650,6 +1006,18 @@ def main() -> None:
         carnival_of_blood()
         carnival_final_girls()
         carnival_portraits()
+    if not only or "creech" in only:
+        poltergeist()
+        creech_manor()
+        creech_final_girls()
+        creech_portraits()
+    if not only or "maple" in only:
+        dr_fright()
+        maple_lane()
+        maple_final_girls()
+        maple_portraits()
+    if not only or "terror" in only:
+        terror_from_above()
     total = sum(f.stat().st_size for f in OUT.rglob("*.webp"))
     print(f"\nTotal: {len(list(OUT.rglob('*.webp')))} archivos, {total / 1024 / 1024:.1f} MB")
 

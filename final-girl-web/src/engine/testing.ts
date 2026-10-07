@@ -20,7 +20,7 @@ export function randomInput(s: GameState, r: RngState): Input {
       for (const a of p.itemActions) opts.push({ type: 'useItem', uid: a.uid, action: a.action });
       if (p.ultimate) opts.push({ type: 'ultimate' });
       if (p.canRescue) opts.push({ type: 'startRescue' }, { type: 'startRescue' });
-      if (s.fg.hand.length && next(r) < 0.1) opts.push({ type: 'discardForTime', cardIds: [s.fg.hand[0]!] });
+      if (!p.strike && s.fg.hand.length && next(r) < 0.1) opts.push({ type: 'discardForTime', cardIds: [s.fg.hand[0]!] });
       const pick = pickOne(r, opts);
       return pick.type === 'playCard' && !enemyZones(s).includes(s.fg.zone) && !pick.weaponUid ? { type: 'endActionPhase' } : pick;
     }
@@ -39,7 +39,7 @@ export function randomInput(s: GameState, r: RngState): Input {
     case 'move': {
       if (p.mode === 'walk' && (next(r) < 0.15 || !p.to.length)) return { type: 'stopMoving' };
       const zone = pickOne(r, p.to);
-      const killerThere = zone === s.killer.zone;
+      const killerThere = !s.birds && zone === s.killer.zone;
       const followers = s.victims.filter((v) => p.followers.includes(v.id) && (!killerThere || v.role === 'novia'));
       const bring = followers.slice(0, rand(r, Math.min(p.followLimit, followers.length) + 1)).map((v) => v.id);
       return { type: 'moveTo', zone, bring };
@@ -89,7 +89,9 @@ export function checkInvariants(s: GameState, totals: { actions: number; items: 
   const errors: string[] = [];
   const cards = s.fg.hand.length + s.actionDiscard.length + Object.values(s.actionTable).reduce((a, b) => a + b, 0);
   if (cards !== totals.actions) errors.push(`cartas de Acción: ${cards} ≠ ${totals.actions}`);
-  const victims = s.victims.length + s.dead.length + s.fg.saved + s.victimPool + (s.gone ?? 0);
+  // Las Víctimas Especiales de Terror from Above no salen de la reserva de 21.
+  const specials = s.birds ? s.victims.filter((v) => v.bsp).length + s.birds.saved : 0;
+  const victims = s.victims.length + s.dead.length + s.fg.saved + s.victimPool + (s.gone ?? 0) - specials;
   if (victims !== 21) errors.push(`Víctimas: ${victims} ≠ 21`);
   const items = s.fg.items.length + s.itemDiscard.length + Object.values(s.itemDecks).reduce((n, d) => n + d.length, 0);
   if (items > totals.items) errors.push(`Objetos: ${items} > ${totals.items}`);
@@ -102,7 +104,10 @@ export function checkInvariants(s: GameState, totals: { actions: number; items: 
   if (s.killer.bloodlust < 0 || s.killer.bloodlust >= killerDef(s).bloodlust.length) errors.push('Sed de Sangre fuera de rango');
   if (s.fg.items.filter((i) => i.inHands).reduce((n, i) => n + itemDef(s, i.id).hands, 0) > 2) errors.push('Más de dos manos ocupadas');
   const minion = killerDef(s).minion;
-  if (minion) {
+  if (s.birds) {
+    for (const z of new Set(s.minions.map((m) => m.zone))) if (s.minions.filter((m) => m.zone === z).length > 3) errors.push(`Más de 3 Pájaros en ${z}`);
+    if (s.victims.some((v) => v.bsp) && s.birds.hidden > 0) errors.push('Víctimas Especiales a la vez escondidas y en juego');
+  } else if (minion) {
     const total = s.minions.length + s.minionPool.ready.length + s.minionPool.exhausted.length;
     if (total !== minion.count) errors.push(`Esbirros: ${total} ≠ ${minion.count}`);
     if (new Set(s.minions.map((m) => m.id)).size !== s.minions.length) errors.push('Esbirros duplicados');

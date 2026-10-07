@@ -38,6 +38,8 @@ export interface KillerAction {
   attacks: number;
   /** Efectos que se aplican una vez por cada Víctima muerta durante esta acción. */
   perVictimKilled?: Effect[];
+  /** Mata a una Víctima en cada espacio por el que pasa el Enemigo (incluidos el inicial y el final). */
+  killAlong?: boolean;
 }
 
 export type Effect =
@@ -241,6 +243,8 @@ export interface HorrorCard {
   minorDarkPower?: { health: number; custom: string };
   /** Se queda en juego junto a la carta de Ira (efecto continuo con este id). */
   stays?: string;
+  /** Se descarta y se roba otra si Carolyn está contigo ('carolyn') o si no lo está ('noCarolyn'). */
+  skipIf?: 'carolyn' | 'noCarolyn';
 }
 
 /** Esbirros del Asesino (reglamento pág. 32): fichas con su propia carta de referencia. */
@@ -270,6 +274,12 @@ export interface Killer {
   select: string;
   startTerror: number;
   health: number;
+  /** No tiene Vida ni puede ser atacado ni dañado (Poltergeist). */
+  invulnerable?: boolean;
+  /** Terror from Above: no hay Asesino, solo Pájaros (Esbirros). El 'Asesino' es una carta de Sed de Sangre invisible en el tablero. */
+  birds?: boolean;
+  /** Cartas de Objeto propias del Asesino (Carolyn y Mr. Floppy): se esconden en los mazos de Objetos. */
+  items?: ItemCard[];
   /** Filas de Sed de Sangre, de abajo (inicio) a arriba (máximo). */
   bloodlust: BloodlustRow[];
   /** Efecto que se repite cada vez que la Sed de Sangre sube estando al máximo. */
@@ -304,6 +314,15 @@ export interface Zone {
   water?: boolean;
   /** Espacio Sagrado (Sacred Groves). */
   sacred?: boolean;
+  /** Creech Manor: espacio con ventana, espacio exterior, planta (0 = fuera) y zona que no está en el tablero. */
+  window?: boolean;
+  outside?: boolean;
+  floor?: number;
+  hidden?: boolean;
+  /** Maple Lane: Casa (se puede buscar, pero no entrar si está ocupada), espacio de Calle y mazo de Objetos del cuadrante. */
+  house?: boolean;
+  street?: boolean;
+  deck?: string;
   /** Posición del centro de la zona en el tablero, en % (para la interfaz). */
   pos: { x: number; y: number };
   /** Huida: a qué zona adyacente huye una Víctima según la tirada. Caras ausentes = se queda. */
@@ -347,8 +366,10 @@ export interface Location {
   /** Tamaño en píxeles de la imagen del tablero (para escalar posiciones). */
   boardSize: { w: number; h: number };
   zones: Zone[];
-  /** Zonas de Búsqueda con mazo de Objetos, en el orden de los huecos del tablero. */
+  /** Mazos de Objetos, en el orden de los huecos del tablero: id de la zona de Búsqueda o, si varias zonas comparten mazo, el id del mazo. */
   itemDecks: ZoneId[];
+  /** Nombres de los mazos compartidos (Maple Lane: uno por cuadrante). */
+  deckNames?: Record<string, string>;
   setups: SetupCard[];
   setupBack: string;
   events: EventCard[];
@@ -364,6 +385,10 @@ export interface Location {
   bloodlustTrack?: { image: string; rows: { effects: Effect[]; text: string }[] };
   /** Ficha de Final: efectos tras la Acción del Asesino cuando el Gran Final está revelado. */
   finaleToken?: { image: string; effects: Effect[]; text: string };
+  /** Uniones de un solo sentido (Creech Manor): `at` es el espacio donde está dibujada la flecha. */
+  oneWay?: { from: ZoneId; to: ZoneId; at: ZoneId }[];
+  /** Unión que cubre la Escalera (la ficha de Escalera Rota la bloquea). */
+  ladder?: [ZoneId, ZoneId];
   specialRules?: string;
 }
 

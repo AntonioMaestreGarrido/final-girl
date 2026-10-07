@@ -128,7 +128,7 @@ registerEffect('gather', (s, arg) => {
 function gatherFrom(s: GameState, from: ZoneId, to: ZoneId): void {
   const vs = victimsIn(s, from);
   if (!vs.length) return;
-  log(s, `${vs.length === 1 ? 'Una Víctima va' : `${vs.length} Víctimas van`} de ${zoneName(s, from)} a ${zoneName(s, to)}.`, 'info', { kind: 'victimMove', victim: vs[0]!.id, path: [from, to] });
+  log(s, `${vs.length === 1 ? 'Una Víctima va' : `${vs.length} Víctimas van`} de ${zoneName(s, from)} a ${zoneName(s, to)}.`, 'info', { kind: 'victimMove', victim: vs[0]!.id, victims: vs.map((v) => v.id), path: [from, to] });
   for (const v of vs) moveVictim(s, v, to);
 }
 registerChoice('gather-to', (s, option, data) => gatherFrom(s, data.from as ZoneId, option));

@@ -124,14 +124,16 @@ function stepMinion(s: GameState, id: string, target: ZoneId): void {
   if (next.length > 1) {
     return push(s, choice(`Empate: ¿por dónde va ${minionName(s)}?`, next.map((z) => ({ id: z, label: zoneName(s, z) })), { kind: 'custom', id: 'cn-minion-step', data: { id } }));
   }
+  const from = m.zone;
   m.zone = next[0]!;
-  log(s, `${minionName(s)} avanza a ${zoneName(s, m.zone)}.`, 'killer', { kind: 'killerMove', path: [m.zone] });
+  log(s, `${minionName(s)} avanza a ${zoneName(s, m.zone)}.`, 'killer', { kind: 'killerMove', path: [from, m.zone], minion: m.id });
 }
 registerChoice('cn-minion-step', (s, option, data) => {
   const m = s.minions.find((x) => x.id === data.id);
   if (!m) return;
+  const from = m.zone;
   m.zone = option;
-  log(s, `${minionName(s)} avanza a ${zoneName(s, option)}.`, 'killer');
+  log(s, `${minionName(s)} avanza a ${zoneName(s, option)}.`, 'killer', { kind: 'killerMove', path: [from, option], minion: m.id });
 });
 
 // ---------------------------------------------------------------- Trampas (fichas)
@@ -685,7 +687,7 @@ function discardTop(s: GameState, zone: ZoneId): void {
 
 /** Todas las Víctimas se mueven 1 espacio hacia una zona. */
 registerEffect('cn-victims-toward', (s, zone) => victimsStepToward(s, [zone!]));
-function victimsStepToward(s: GameState, targets: ZoneId[]): void {
+export function victimsStepToward(s: GameState, targets: ZoneId[]): void {
   const groups = new Map<ZoneId, Victim[]>();
   for (const v of s.victims) if (!targets.includes(v.zone)) groups.set(v.zone, [...(groups.get(v.zone) ?? []), v]);
   for (const [from, vs] of groups) {

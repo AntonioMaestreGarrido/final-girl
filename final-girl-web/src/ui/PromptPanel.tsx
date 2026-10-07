@@ -16,7 +16,7 @@ interface Props {
 
 const ROLE_NAMES: Record<string, string> = {
   novio: 'Novio', novia: 'Novia', maldita: 'La Maldita', super: 'Super Turista', hombre: 'Hombre Sagrado', guia: 'Guía Turístico',
-  prometido: 'Prometido', hermana: 'Hermana', lobo: 'Hombre Lobo',
+  prometido: 'Prometido', hermana: 'Hermana', lobo: 'Hombre Lobo', cazador: 'Víctima Especial', 'novio-ml': 'Novio', smalley: 'Smalley',
 };
 const roleName = (role?: string) => (role ? (ROLE_NAMES[role] ?? 'Víctima') : 'Víctima');
 
@@ -54,7 +54,7 @@ function PromptBody({ state, send, prompt: p, selectedVictims, setSelectedVictim
       const followers = state.victims.filter((v) => p.followers.includes(v.id));
       return (
         <div className="prompt-block">
-          <h4>{p.mode === 'boat' ? 'Viaje en bote: elige destino en el mapa' : p.mode === 'free' ? 'Muévete a la zona del Asesino' : `Muévete: te quedan ${p.remaining} ${p.remaining === 1 ? 'zona' : 'zonas'}. Haz clic en una zona resaltada.`}</h4>
+          <h4>{p.mode === 'boat' ? 'Viaje en bote: elige destino en el mapa' : p.mode === 'convince' ? 'Convencer: elige la Casa adyacente en la que entras' : p.mode === 'free' ? 'Muévete a la zona del Asesino' : `Muévete: te quedan ${p.remaining} ${p.remaining === 1 ? 'zona' : 'zonas'}. Haz clic en una zona resaltada.`}</h4>
           {followers.length > 0 && (
             <p>
               Te siguen las Víctimas marcadas (máx. {p.followLimit}; desmarca las que quieras dejar). Llévalas a una <b>Zona de Salida</b> para salvarlas:{' '}
@@ -85,12 +85,13 @@ function PromptBody({ state, send, prompt: p, selectedVictims, setSelectedVictim
     case 'react':
       return (
         <div className="prompt-block danger">
-          <h4>¡{attackerName(state)} te ataca! {p.damage} de daño.</h4>
+          <h4>{birdVictim(state) ? `¡${p.damage} ${p.damage === 1 ? 'Pájaro ataca' : 'Pájaros atacan'} a una Víctima de tu espacio! Para salvarla tienes que evitar TODO el daño (${p.damage}).` : `¡${attackerName(state)} te ataca! ${p.damage} de daño.`}</h4>
           <div className="buttons actions">
             {p.cards.map((c) => (
               <button key={c} className="btn" onClick={() => send({ type: 'react', cardId: c })}>Reaccionar: {actionDef(c).name}</button>
             ))}
             {p.lid && <button className="btn" onClick={() => send({ type: 'useLid' })}>Tapadera (−1 daño)</button>}
+            {p.trident && <button className="btn" onClick={() => send({ type: 'useTrident' })}>Tridente (evita el daño)</button>}
             {p.spray && <button className="btn" onClick={() => send({ type: 'pepperSpray' })}>Spray de pimienta (termina la fase)</button>}
             <button className="btn primary" onClick={() => send({ type: 'takeHit' })}>Recibir el golpe</button>
           </div>
@@ -111,11 +112,17 @@ function PromptBody({ state, send, prompt: p, selectedVictims, setSelectedVictim
 // ---------------------------------------------------------------- mano
 
 /** Quién te está atacando ahora (el Asesino, un Esbirro, una Víctima-Marioneta o el Hombre Lobo). */
+/** ¿Los Pájaros atacan a una Víctima de tu espacio (y no a ti)? */
+function birdVictim(state: GameState): boolean {
+  const atk = [...state.stack].reverse().find((t) => t.t === 'attackFG');
+  return !!atk && atk.t === 'attackFG' && !!atk.victim;
+}
+
 function attackerName(state: GameState): string {
   const atk = [...state.stack].reverse().find((t) => t.t === 'attackFG');
   const by = atk && atk.t === 'attackFG' ? atk.by : undefined;
   if (by === 'wolf') return 'El Hombre Lobo';
-  if (by?.startsWith('m:')) return `Una ${killerDef(state).minion?.name ?? 'Marioneta'}`;
+  if (by?.startsWith('m:')) return killerDef(state).birds ? 'Los Pájaros' : `Una ${killerDef(state).minion?.name ?? 'Marioneta'}`;
   if (by?.startsWith('v:')) return 'Una Víctima-Marioneta';
   return killerDef(state).name;
 }
@@ -142,7 +149,7 @@ function MainPrompt({ state, send, prompt: p }: { state: GameState; send: Props[
   const [selected, setSelected] = useState<number[]>([]);
   const [weaponFor, setWeaponFor] = useState<CardId | null>(null);
   const playable = p.playable.map((x) => x.cardId);
-  const sameZone = state.fg.zone === state.killer.zone || state.minions.some((m) => m.zone === state.fg.zone) || state.victims.some((v) => v.zone === state.fg.zone && v.role !== 'lobo');
+  const sameZone = (!killerDef(state).birds && state.fg.zone === state.killer.zone) || state.minions.some((m) => m.zone === state.fg.zone) || state.victims.some((v) => v.zone === state.fg.zone && v.role !== 'lobo');
 
   const onCard = (i: number) => {
     const c = state.fg.hand[i]!;
@@ -157,7 +164,7 @@ function MainPrompt({ state, send, prompt: p }: { state: GameState; send: Props[
   return (
     <div className="prompt-block">
       <h4>
-        {mode === 'play' ? 'Fase de Acción: juega una carta, usa un objeto o termina la fase.' : 'Elige las cartas que descartas (+1 Tiempo cada una).'}
+        {p.strike === 'enemy' ? 'Puedes jugar cartas de Acción que hagan daño al Enemigo que ha aparecido.' : p.strike === 'victims' ? 'Puedes jugar UNA carta de Acción que haga daño: cada punto mata a una Víctima de tu espacio (no sube la Sed de Sangre).' : mode === 'play' ? 'Fase de Acción: juega una carta, usa un objeto o termina la fase.' : 'Elige las cartas que descartas (+1 Tiempo cada una).'}
         <span className="time-badge">Tiempo: {state.fg.time < 0 ? 'bajo cero' : state.fg.time}</span>
       </h4>
       {weaponFor && (
@@ -180,8 +187,8 @@ function MainPrompt({ state, send, prompt: p }: { state: GameState; send: Props[
               <button key={`${a.uid}-${a.action}`} className="btn" onClick={() => send({ type: 'useItem', uid: a.uid, action: a.action })}>{a.label}</button>
             ))}
             {p.ultimate && <button className="btn good" onClick={() => send({ type: 'ultimate' })}>{p.ultimateLabel ?? 'Habilidad Definitiva: ir a por el Asesino'}</button>}
-            {state.fg.hand.length > 0 && <button className="btn ghost" onClick={() => setMode('discard')}>Descartar por Tiempo…</button>}
-            <button className="btn primary" onClick={() => send({ type: 'endActionPhase' })}>Terminar fase de Acción</button>
+            {!p.strike && state.fg.hand.length > 0 && <button className="btn ghost" onClick={() => setMode('discard')}>Descartar por Tiempo…</button>}
+            <button className="btn primary" onClick={() => send({ type: 'endActionPhase' })}>{p.strike ? 'No jugar más cartas' : 'Terminar fase de Acción'}</button>
           </>
         ) : (
           <>

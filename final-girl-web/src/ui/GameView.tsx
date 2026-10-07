@@ -5,6 +5,7 @@ import { Board } from './Board';
 import { CardReveal } from './CardReveal';
 import { FinalGirlPanel, KillerPanel, LocationPanel } from './Panels';
 import { Inventory } from './Inventory';
+import { displayZones, fxDuration, fxSide, HOP_MS, isFxAnim, isMoveAnim, type Fx } from './moveFx';
 import { PromptPanel } from './PromptPanel';
 import { useGame, type Settings } from './useGame';
 import { ZoomProvider } from './Zoom';
@@ -31,15 +32,36 @@ export function GameView({ initial, settings, onSettings, onExit }: Props) {
   const { state } = g;
 
   // Cuando se muestra una entrada del registro que revela una carta, se abre la carta en el centro.
+  const [fx, setFx] = useState<Fx | null>(null);
   const prevShown = useRef(g.shown);
   useEffect(() => {
-    const card = g.shown > prevShown.current ? state.log[g.shown - 1]?.card : undefined;
-    // Saltar (varias entradas de golpe) no enseña las cartas intermedias.
-    if (card && g.shown === prevShown.current + 1) setReveal({ key: g.shown, card });
+    const entry = g.shown > prevShown.current ? state.log[g.shown - 1] : undefined;
+    const single = g.shown === prevShown.current + 1;
+    // Saltar (varias entradas de golpe) no enseña las cartas intermedias ni los movimientos.
+    if (entry?.card && single) setReveal({ key: g.shown, card: entry.card });
     else if (g.shown !== prevShown.current) setReveal(null);
+    if (entry && single && settings.highlight && isFxAnim(entry.anim)) setFx({ key: g.shown, entry, step: 0 });
+    else if (g.shown !== prevShown.current) setFx(null);
     prevShown.current = g.shown;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [g.shown]);
+
+  // El resalte avanza la pieza casilla a casilla y se apaga al terminar.
+  const fxKey = fx?.key;
+  useEffect(() => {
+    const anim = fx?.entry.anim;
+    if (fxKey === undefined || !anim) return;
+    const key = fxKey;
+    const timers: number[] = [];
+    if (isMoveAnim(anim)) {
+      for (let i = 1; i < anim.path.length; i++) {
+        timers.push(window.setTimeout(() => setFx((f) => (f && f.key === key ? { ...f, step: i } : f)), i * HOP_MS));
+      }
+    }
+    timers.push(window.setTimeout(() => setFx((f) => (f && f.key === key ? null : f)), fxDuration(anim)));
+    return () => timers.forEach((t) => window.clearTimeout(t));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fxKey]);
   const [selectedVictims, setSelectedVictims] = useState<string[]>([]);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -76,6 +98,7 @@ export function GameView({ initial, settings, onSettings, onExit }: Props) {
   };
 
   const visibleLog = state.log.slice(0, g.shown);
+  const zonesOverride = useMemo(() => (settings.highlight ? displayZones(state.log, g.shown, fx) : new Map<string, string>()), [state.log, g.shown, fx, settings.highlight]);
   const lastDice = [...visibleLog].reverse().find((l) => l.anim?.kind === 'dice');
 
   return (
@@ -102,6 +125,9 @@ export function GameView({ initial, settings, onSettings, onExit }: Props) {
                 <input type="radio" checked={settings.pacing === 'step'} onChange={() => onSettings({ ...settings, pacing: 'step' })} /> Paso a paso (botón Continuar)
               </label>
               <label>
+                <input type="checkbox" checked={settings.highlight} onChange={(e) => onSettings({ ...settings, highlight: e.target.checked })} /> Resaltar movimientos y muertes
+              </label>
+              <label>
                 Velocidad
                 <input type="range" min={100} max={1500} step={50} value={1600 - settings.speed} onChange={(e) => onSettings({ ...settings, speed: 1600 - Number(e.target.value) })} />
               </label>
@@ -115,7 +141,12 @@ export function GameView({ initial, settings, onSettings, onExit }: Props) {
             <LocationPanel state={state} />
           </aside>
           <section className="board-col">
-            <Board state={state} targets={g.revealing ? [] : targets} onZone={onZone} selectedVictims={selectedVictims} onVictim={onVictim} />
+            <Board state={state} targets={g.revealing ? [] : targets} onZone={onZone} selectedVictims={selectedVictims} onVictim={onVictim} zones={zonesOverride} fx={fx} />
+            {fx && isFxAnim(fx.entry.anim) && (
+              <div key={fx.key} className={`move-banner ${fxSide(fx.entry.anim)}`} style={{ animationDuration: `${fxDuration(fx.entry.anim)}ms` }}>
+                {fx.entry.text}
+              </div>
+            )}
             {lastDice?.anim?.kind === 'dice' && <DiceTray key={g.shown} faces={lastDice.anim.faces} />}
           </section>
           <aside className="side-col right-panel">

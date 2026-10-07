@@ -3,14 +3,17 @@
  * Las Marionetas de Geppetto son Esbirros: 1 Vida, 1 de Ataque y el Movimiento de Geppetto.
  */
 import type { ZoneId } from '../content/types';
-import { damageKiller, has, log } from './core';
+import { damageKiller, has, killerShielded, log } from './core';
 import { distances, killerDef, zoneName } from './lookup';
+import { birdsOnKilled } from './birds';
 import type { GameState, Minion } from './state';
 
 export const minionsAt = (s: GameState, zone: ZoneId): Minion[] => s.minions.filter((m) => m.zone === zone);
 
 /** Zonas con algún Enemigo (el Asesino o un Esbirro). */
-export const enemyZones = (s: GameState): ZoneId[] => [...new Set([s.killer.zone, ...s.minions.map((m) => m.zone)])];
+export const enemyZones = (s: GameState): ZoneId[] => [
+  ...new Set([...(killerShielded(s) ? [] : [s.killer.zone]), ...s.minions.map((m) => m.zone)]),
+];
 
 export const minionName = (s: GameState, plural = false): string => {
   const def = killerDef(s).minion;
@@ -35,8 +38,10 @@ export function enemyInRange(s: GameState, min: number, max: number): boolean {
 /** Un Esbirro muere: su ficha pasa a la casilla Agotado. */
 export function killMinion(s: GameState, m: Minion): void {
   s.minions = s.minions.filter((x) => x !== m);
-  s.minionPool.exhausted.push(m.id);
+  // Los Enemigos temporales (Gigante, Muñeco Payaso) no tienen ficha en la carta de Esbirros.
+  if (!m.id.startsWith('tmp-')) s.minionPool.exhausted.push(m.id);
   log(s, `${minionName(s)} destruida en ${zoneName(s, m.zone)}.`, 'good');
+  birdsOnKilled(s);
 }
 
 /**

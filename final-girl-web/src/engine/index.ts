@@ -10,6 +10,7 @@ import {
   inputMain,
   inputRescue,
   inputRoll,
+  inputStrike,
   inputSearch,
   stepArrange,
   stepDiscardDown,
@@ -19,13 +20,18 @@ import {
   stepRescue,
   stepRoll,
   stepSearch,
+  stepStrike,
 } from './player';
 import { resolveChoice } from './effects';
+import { birdsCheckSpecials, birdsEventOk, birdsHorrorOk, birdsSetup } from './birds';
+import { creechInit } from './creech';
+import { mapleSetup } from './maple';
 import { createRng, pick, shuffle } from './rng';
 import type { GameConfig, GameState, Input, Task } from './state';
 
 export * from './state';
 export { RuleError, killerRow, terrorLabel } from './core';
+export { brVisible } from './maple';
 export { actionDef, boardDef, eventDef, fgDef, horrorDef, itemDef, killerDef, locationDef, zoneDef, zoneName } from './lookup';
 
 // ---------------------------------------------------------------- preparación
@@ -54,7 +60,7 @@ export function createGame(config: GameConfig): GameState {
   const darkPower = config.epicDarkPower && epic ? epic : pick(rng, normalPowers);
 
   // Mazo de Horror: Asesino + Lugar barajados, se usan 10.
-  const horrorPool = [...killer.horror, ...location.horror].flatMap((h) => Array<string>(h.copies).fill(h.id));
+  const horrorPool = [...killer.horror, ...location.horror.filter((h) => !killer.birds || birdsHorrorOk(h))].flatMap((h) => Array<string>(h.copies).fill(h.id));
   const horrorDeck = shuffle(rng, horrorPool).slice(0, HORROR_DECK_SIZE);
 
   // Objetos: tres montones de cuatro con la carta superior bocarriba.
@@ -62,7 +68,15 @@ export function createGame(config: GameConfig): GameState {
   const traps = location.items.filter((i) => i.trap).map((i) => i.id);
   const items = shuffle(rng, [...location.items.filter((i) => !i.trap).map((i) => i.id), ...bonus]);
   const itemDecks: GameState['itemDecks'] = {};
-  if (traps.length) {
+  if (killer.items?.length) {
+    // Poltergeist: se usan 10 Objetos del Lugar; Carolyn y Mr. Floppy se esconden en los mazos, nunca bocarriba.
+    const open = items.slice(0, location.itemDecks.length);
+    const hiddenPool = shuffle(rng, [...items.slice(location.itemDecks.length, 10), ...killer.items.map((i) => i.id)]);
+    const per = Math.ceil(hiddenPool.length / location.itemDecks.length);
+    location.itemDecks.forEach((zone, n) => {
+      itemDecks[zone] = [{ id: open[n]!, faceUp: true }, ...hiddenPool.slice(n * per, (n + 1) * per).map((id) => ({ id, faceUp: false }))];
+    });
+  } else if (traps.length) {
     // Carnival of Blood: cada mazo lleva 2 Objetos y 1 Objeto Trampa barajados, con 1 Objeto más bocarriba encima.
     const hidden = ITEM_DECK_SIZE - 1;
     const trapOrder = shuffle(rng, traps);
@@ -73,8 +87,10 @@ export function createGame(config: GameConfig): GameState {
       itemDecks[zone] = [{ id: open, faceUp: true }, ...under.map((id) => ({ id, faceUp: false }))];
     });
   } else {
+    // 12 Objetos repartidos en los mazos del Lugar (3 mazos de 4, o 4 de 3 en Maple Lane).
+    const deckSize = Math.floor(12 / location.itemDecks.length);
     location.itemDecks.forEach((zone, n) => {
-      itemDecks[zone] = items.slice(n * ITEM_DECK_SIZE, (n + 1) * ITEM_DECK_SIZE).map((id, i) => ({ id, faceUp: i === 0 }));
+      itemDecks[zone] = items.slice(n * deckSize, (n + 1) * deckSize).map((id, i) => ({ id, faceUp: i === 0 }));
     });
   }
 
@@ -124,7 +140,7 @@ export function createGame(config: GameConfig): GameState {
     victimPool: VICTIM_POOL - victims.length,
     horrorDeck,
     horrorDiscard: [],
-    eventDeck: shuffle(rng, location.events.map((e) => e.id)),
+    eventDeck: shuffle(rng, location.events.filter((e) => !killer.birds || birdsEventOk(e)).map((e) => e.id)),
     activeEvents: [],
     eventDiscard: [],
     itemDecks,
@@ -140,6 +156,7 @@ export function createGame(config: GameConfig): GameState {
     activeHorror: [],
     blocked: [],
     setupCard: setup.id,
+    creech: creechInit(),
     mods: {
       bonusDiceNextRoll: 0,
       partialsNextRoll: false,
@@ -163,7 +180,10 @@ export function createGame(config: GameConfig): GameState {
     infoSeq: 0,
   };
 
+  if (killer.id === 'dr-fright' || location.id === 'maple-lane') mapleSetup(s, tokens.slice(2));
+  if (killer.birds) birdsSetup(s, config.birdsSpecials ?? 2);
   log(s, `${fg.name} contra ${killer.name} en ${location.name}. Preparación: ${setup.name}.`, 'phase');
+  if (killer.birds) log(s, `Terror from Above: salva a las ${s.birds!.total} Víctimas Especiales (siguen escondidas) y no dejes que haya 3 Pájaros en cada espacio.`, 'phase');
   if (config.board === 'extreme') log(s, 'Modo Terror Extremo.', 'phase');
   // Se roba el primer Evento y empieza el turno 1.
   const firstEvent = s.eventDeck.shift()!;
@@ -214,6 +234,8 @@ function step(s: GameState, task: Task): StepResult {
       return 'wait';
     case 'discardDown':
       return stepDiscardDown(s);
+    case 'strike':
+      return stepStrike(s, task);
     case 'gainItem':
     case 'custom':
       throw new RuleError(`Tarea no soportada: ${task.t}`);
@@ -233,6 +255,7 @@ export function run(s: GameState): void {
       return;
     }
     s.prompt = null;
+    birdsCheckSpecials(s);
     const task = s.stack[s.stack.length - 1];
     if (!task) return;
     const r = step(s, task);
@@ -262,6 +285,8 @@ function handleInput(s: GameState, task: Task, input: Input): 'done' | 'continue
       return inputArrange(s, input);
     case 'discardDown':
       return inputDiscardDown(s, input);
+    case 'strike':
+      return inputStrike(s, task, input);
     case 'choice': {
       if (input.type !== 'choose' || !task.options.some((o) => o.id === input.option)) throw new RuleError('Opción no válida');
       removeTask(s, task);

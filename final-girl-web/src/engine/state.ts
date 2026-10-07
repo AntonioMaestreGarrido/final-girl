@@ -15,6 +15,8 @@ export interface GameConfig {
   seed: number;
   /** Para pruebas: fija la carta de Preparación en lugar de robarla al azar. */
   setupId?: string;
+  /** Terror from Above: Víctimas Especiales a salvar (1 Fácil, 2 Normal, 3 Difícil). */
+  birdsSpecials?: 1 | 2 | 3;
 }
 
 /**
@@ -35,9 +37,26 @@ export interface Victim {
   special?: VictimColor;
   /** Papel que le da un Evento. */
   role?: VictimRole;
+  /** Víctima Especial de Terror from Above: nunca puede ser atacada ni asesinada; hay que salvarlas a todas. */
+  bsp?: true;
 }
 
-export type VictimRole = 'novio' | 'novia' | 'maldita' | 'super' | 'hombre' | 'guia' | 'prometido' | 'hermana' | 'lobo';
+/** Estado propio de Terror from Above. */
+export interface BirdsState {
+  /** Víctimas Especiales que aún no han salido de su escondite. */
+  hidden: number;
+  /** Víctimas Especiales en total (las que hay que salvar para ganar) y las ya salvadas. */
+  total: number;
+  saved: number;
+  /** Pájaros generados en la última tirada de Generar Pájaros. */
+  lastSpawned: number;
+  /** Ataques de Pájaros que se han producido en el efecto en curso. */
+  lastAttacks: number;
+  /** Fichas de pájaro sobre la carta Muro de aves. */
+  wall: number;
+}
+
+export type VictimRole = 'novio-ml' | 'smalley' | 'cazador' | 'novio' | 'novia' | 'maldita' | 'super' | 'hombre' | 'guia' | 'prometido' | 'hermana' | 'lobo';
 
 /** Esbirro en el tablero (Marioneta). */
 export interface Minion {
@@ -46,6 +65,67 @@ export interface Minion {
   hp: number;
   /** Ya recibió daño este turno (Abominación masiva ignora el primero). */
   hit?: boolean;
+}
+
+/** Estado propio de The Haunting of Creech Manor. */
+export interface CreechState {
+  /** Candado: unión bloqueada para Enemigos y Víctimas que no te acompañan. */
+  lock: [ZoneId, ZoneId] | null;
+  /** Los movimientos de la próxima / actual fase de Acción tienen pánico. */
+  panicNext: boolean;
+  panicNow: boolean;
+  /** No puedes moverte ('inside') o entrar en la casa ('outside'): próxima / actual fase de Acción. */
+  lockNext: 'inside' | 'outside' | null;
+  lockNow: 'inside' | 'outside' | null;
+  /** El Helicóptero ya se usó. */
+  heliUsed: boolean;
+  /** Alice: tipo de carta de Acción con el que siempre tira 5 dados. */
+  fiveDice: CardId | null;
+  /** Alguna Víctima Especial (Cazadores de fantasmas) ya ha muerto: las demás te siguen. */
+  hunterDied: boolean;
+  /** Carolyn ya se ha unido a la Chica Final alguna vez. */
+  carolynFound: boolean;
+  /** Una carta permite jugar cartas de Acción que hagan daño ahora mismo. */
+  strike: 'enemy' | 'victims' | null;
+  /** Confusión psíquica: ya se pagó el Tiempo para ignorar la penalización de la próxima carta de Buscar. */
+  psychicPaid: boolean;
+}
+
+/** Estado propio de Frightmare on Maple Lane (Dr. Fright / Maple Lane). */
+export interface MapleState {
+  /** Estás Dormida en la Sala de Calderas. */
+  asleep: boolean;
+  /**
+   * Sala de Calderas: cartas aún por revelar y las ya colocadas. Posiciones en medias cartas desde la carta
+   * de Despierto/Dormido ('dd'), que cubre el mazo.
+   */
+  br: { deck: string[]; placed: { id: string; x: number; y: number }[] };
+  /** Realidad borrosa: puedes dañar al Dr. Fright (y él a ti) aunque estés Despierta, hasta la próxima fase de Terror. */
+  blurred: boolean;
+  /** Marcado para la muerte: las Víctimas de tu espacio entran en pánico hasta la próxima fase de Terror. */
+  marked: boolean;
+  /** No puedes entrar en Casas ocupadas (siguiente / actual fase de Acción). */
+  lockNext: boolean;
+  lockNow: boolean;
+  /** −1 dado en las Tiradas de Horror (siguiente / actual fase de Acción). */
+  dimNext: boolean;
+  dimNow: boolean;
+  /** Cartas adicionales de la Sala de Calderas al final de la próxima fase del Asesino. */
+  extraBR: number;
+  /** Marca para comparar (muertes, daño recibido) dentro de una carta. */
+  mark: number;
+  /** El Dr. Fright atacó a la Chica Final durante la carta en curso. */
+  attackedFG: boolean;
+  /** Factor sorpresa: Víctimas muertas por pánico este turno. */
+  surprise: number;
+  /** Fichas negras de Vida Final en la reserva general (valores al dorso). */
+  reserve: number[];
+  /** Nunca realmente muerto ya se ha usado. */
+  revived: boolean;
+  /** Deben morir todos: el Dr. Fright está sobre su carta (siempre "en tu espacio" para atacarlo). */
+  offBoard: boolean;
+  /** Salida a la que se dirige el Coche de Policía. */
+  policeTo: ZoneId | null;
 }
 
 export interface ItemInst {
@@ -126,9 +206,12 @@ export interface LogEntry {
   /** Datos para animar (dados, recorridos...). */
   anim?:
     | { kind: 'dice'; faces: number[] }
-    | { kind: 'killerMove'; path: ZoneId[] }
-    | { kind: 'fgMove'; path: ZoneId[] }
-    | { kind: 'victimMove'; victim: string; path: ZoneId[] };
+    /** Recorrido del Asesino (o del Esbirro / Víctima-Marioneta que actúa, si se indica). Con un solo espacio: aparece ahí. */
+    | { kind: 'killerMove'; path: ZoneId[]; minion?: string; victim?: string }
+    /** `victims`: las Víctimas que la acompañan en el movimiento. */
+    | { kind: 'fgMove'; path: ZoneId[]; victims?: string[] }
+    | { kind: 'victimMove'; victim: string; path: ZoneId[]; victims?: string[] }
+    | { kind: 'victimDie'; zone: ZoneId };
   tone?: 'info' | 'good' | 'bad' | 'killer' | 'phase';
   /** Carta que se revela con esta entrada (la UI la muestra girándose en el centro). */
   card?: { kind: 'horror' | 'event' | 'finale' | 'darkPower' | 'item'; id: CardId };
@@ -157,15 +240,17 @@ export type Task =
   | { t: 'effects'; effects: Effect[]; i: number; src: EffectSource }
   | { t: 'playAction'; cardId: CardId; weaponUid?: string; step: 'roll' | 'resolve'; successes?: number; prayed?: boolean }
   | { t: 'roll'; purpose: RollPurpose; dice: number[]; converted: number[]; auto34: boolean; successes?: number }
-  | { t: 'fgMove'; remaining: number; src: EffectSource; mode: 'walk' | 'boat' | 'free'; moved?: number }
+  | { t: 'fgMove'; remaining: number; src: EffectSource; mode: 'walk' | 'boat' | 'free' | 'convince'; moved?: number }
   | { t: 'rescue' }
-  | { t: 'killerAction'; action: KillerAction; src: EffectSource; step: 'target' | 'path' | 'move' | 'spray' | 'attack' | 'obsession' | 'done'; target?: Target; killed: number; attackedFG: boolean; attacksLeft?: number; path?: ZoneId[]; actor?: string; moved?: boolean }
-  | { t: 'attackFG'; damage: number; reduce: number; ignore: boolean; resolved?: boolean; by?: string }
+  | { t: 'killerAction'; action: KillerAction; src: EffectSource; step: 'target' | 'path' | 'move' | 'spray' | 'attack' | 'obsession' | 'done'; target?: Target; killed: number; attackedFG: boolean; attacksLeft?: number; path?: ZoneId[]; actor?: string; moved?: boolean; stopChecked?: boolean }
+  | { t: 'attackFG'; damage: number; reduce: number; ignore: boolean; resolved?: boolean; by?: string; victim?: string }
   | { t: 'reaction'; cardId: CardId; attack: number; rolled?: boolean; successes?: number }
   | { t: 'search'; zone: ZoneId; drawn: DeckCard[]; draw: 1 | 2; zappo?: boolean }
   | { t: 'gainItem'; uid: string }
   | { t: 'arrange'; optional: boolean }
-  | { t: 'horror'; cardId: CardId }
+  | { t: 'horror'; cardId: CardId; asked?: boolean }
+  /** Una Chica Final puede jugar cartas de Acción que hagan daño fuera de su fase (Gigante, Muñeco Payaso, «¡Tengo que matarte!»). */
+  | { t: 'strike'; mode: 'enemy' | 'victims'; left: number }
   | { t: 'event'; cardId: CardId }
   | { t: 'choice'; title: string; options: { id: string; label: string }[]; then: ChoiceHandler }
   | { t: 'discardDown' }
@@ -196,12 +281,12 @@ export interface Option {
 }
 
 export type Prompt =
-  | { type: 'main'; playable: { cardId: CardId; weapons: string[] }[]; itemActions: { uid: string; action: string; label: string }[]; ultimate: boolean; ultimateLabel?: string; canRescue: boolean }
+  | { type: 'main'; strike?: 'enemy' | 'victims'; playable: { cardId: CardId; weapons: string[] }[]; itemActions: { uid: string; action: string; label: string }[]; ultimate: boolean; ultimateLabel?: string; canRescue: boolean }
   | { type: 'roll'; purpose: RollPurpose; dice: number[]; converted: number[]; auto34: boolean; canCloseCall: boolean; canLuckyDice: boolean; canSister?: boolean }
   | { type: 'choice'; title: string; options: Option[] }
-  | { type: 'move'; remaining: number; to: ZoneId[]; followers: string[]; followLimit: number; mode: 'walk' | 'boat' | 'free' }
+  | { type: 'move'; remaining: number; to: ZoneId[]; followers: string[]; followLimit: number; mode: 'walk' | 'boat' | 'free' | 'convince' }
   | { type: 'rescue'; victims: string[]; slots: number[]; ultimate: boolean }
-  | { type: 'react'; damage: number; cards: CardId[]; lid: string | null; spray: string | null }
+  | { type: 'react'; damage: number; cards: CardId[]; lid: string | null; spray: string | null; trident?: string | null }
   | { type: 'search'; drawn: CardId[] }
   | { type: 'arrange'; optional: boolean }
   | { type: 'planning'; buyable: CardId[] }
@@ -229,6 +314,7 @@ export type Input =
   | { type: 'rescueDone' }
   | { type: 'react'; cardId: CardId }
   | { type: 'useLid' }
+  | { type: 'useTrident' }
   | { type: 'pepperSpray' }
   | { type: 'takeHit' }
   | { type: 'searchPick'; keep: number; otherTo: 'top' | 'bottom' }
@@ -275,6 +361,9 @@ export interface GameState {
   /** Uniones bloqueadas para las Víctimas (Señales de fuera de servicio). */
   blocked: [ZoneId, ZoneId][];
   setupCard: CardId;
+  creech?: CreechState;
+  maple?: MapleState;
+  birds?: BirdsState;
   mods: Mods;
   stack: Task[];
   prompt: Prompt | null;

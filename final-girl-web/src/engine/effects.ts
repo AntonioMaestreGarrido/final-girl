@@ -8,6 +8,7 @@ import {
   healFG,
   healKiller,
   increaseBloodlust,
+  killerShielded,
   killVictim,
   log,
   moveVictim,
@@ -22,9 +23,12 @@ import {
 } from './core';
 import { applyWrath, unleashWrath, wrathAmount } from './wrath';
 import { resolveTrapItem } from './carnival';
+import { creechDiscardGuard, creechOnGain, creechMoveLimit, strikeVictims } from './creech';
+import { mapleMarkSearched, mapleOnGain, searchableHere } from './maple';
 import { startKillerAction } from './killer';
+import { BIRDS_NOOP, birdsKillerAction, birdsPlaceKiller } from './birds';
 import { damageMinionsAt, enemyZones, minionName, minionsAt } from './enemies';
-import { actionDef, distance, distances, fgDef, horrorDef, itemDef, killerDef, locationDef, neighbors, shortestPaths, victimsIn, zoneDef, zoneName } from './lookup';
+import { actionDef, deckOf, distance, distances, fgDef, horrorDef, isBirds, itemDef, killerDef, locationDef, neighbors, shortestPaths, victimsIn, zoneDef, zoneName } from './lookup';
 import { pick, rollDie } from './rng';
 import { choice, customChoices, customEffects, registerChoice, registerEffect } from './registry';
 import type { ChoiceHandler, EffectSource, GameState } from './state';
@@ -43,7 +47,7 @@ export function applyEffect(s: GameState, e: Effect, src: EffectSource): void {
       return damageFG(s, e.amount);
     case 'move':
       if (s.fg.legTrap) return log(s, 'La trampa para osos te sujeta la pierna: no puedes moverte.', 'bad');
-      return push(s, { t: 'fgMove', remaining: e.upTo, src, mode: 'walk' });
+      return push(s, { t: 'fgMove', remaining: creechMoveLimit(s, e.upTo), src, mode: 'walk' });
     case 'endActionPhase':
       if (s.phase === 'action') s.mods.actionPhaseEnding = true;
       return;
@@ -59,7 +63,9 @@ export function applyEffect(s: GameState, e: Effect, src: EffectSource): void {
     case 'search': {
       const zone = s.fg.zone;
       if (!zoneDef(s, zone).search) return searchFromAfar(s, e.draw);
-      return push(s, { t: 'search', zone, drawn: [], draw: e.draw });
+      if (!searchableHere(s)) return log(s, 'Esta Casa ya no se puede buscar.', 'bad');
+      push(s, { t: 'search', zone: deckOf(s, zone), drawn: [], draw: e.draw });
+      return mapleMarkSearched(s);
     }
     case 'drawItemAnyDeck': {
       const decks = Object.entries(s.itemDecks).filter(([, d]) => d.length);
@@ -79,7 +85,7 @@ export function applyEffect(s: GameState, e: Effect, src: EffectSource): void {
     case 'bloodlust':
       return increaseBloodlust(s, e.amount);
     case 'killerAction':
-      return startKillerAction(s, e.action, src);
+      return isBirds(s) ? birdsKillerAction(s, e.action) : startKillerAction(s, e.action, src);
     case 'killerHeal':
       return healKiller(s, e.amount);
     case 'drawEvent':
@@ -155,13 +161,13 @@ export function attackCandidates(s: GameState, src: EffectSource): { id: string;
     return d !== undefined && d >= min && d <= max;
   };
   const out: { id: string; label: string }[] = [];
-  if (inRange(s.killer.zone)) out.push({ id: 'killer', label: `${killerDef(s).name} (${zoneName(s, s.killer.zone)})` });
+  if (!killerShielded(s) && inRange(s.killer.zone)) out.push({ id: 'killer', label: `${killerDef(s).name} (${zoneName(s, s.killer.zone)})` });
   for (const z of new Set(s.minions.map((m) => m.zone))) {
     if (!inRange(z)) continue;
     const n = minionsAt(s, z).length;
     out.push({ id: `mz:${z}`, label: `${n} ${n === 1 ? minionName(s) : minionName(s, true)} en ${zoneName(s, z)}` });
   }
-  if (has(s, 'finale-friends')) {
+  if (has(s, 'finale-friends') || strikeVictims(s)) {
     for (const z of new Set(s.victims.filter((v) => v.role !== 'lobo').map((v) => v.zone))) {
       if (inRange(z)) out.push({ id: `vz:${z}`, label: `Matar a una Víctima en ${zoneName(s, z)} (sube la Sed de Sangre)` });
     }
@@ -261,10 +267,13 @@ function hitEnemy(s: GameState, key: string, ctx: AttackCtx, partial = false): v
     }
   } else if (key.startsWith('vz:')) {
     const zone = key.slice(3);
-    const v = [...victimsIn(s, zone)].filter((x) => x.role !== 'lobo').sort((a, b) => (a.role ? 1 : 0) - (b.role ? 1 : 0))[0];
-    if (v) {
+    // «¡Tengo que matarte!»: cada punto de daño mata a una Víctima y no sube la Sed de Sangre.
+    const n = strikeVictims(s) ? ctx.total : 1;
+    for (let i = 0; i < n; i++) {
+      const v = [...victimsIn(s, zone)].filter((x) => x.role !== 'lobo').sort((a, b) => (a.role ? 1 : 0) - (b.role ? 1 : 0))[0];
+      if (!v) break;
       log(s, `${fgDef(s).name} ataca a ${victimLabel(v)}.`, 'bad');
-      killVictim(s, v, false);
+      killVictim(s, v, false, strikeVictims(s) ? { noBloodlust: true } : {});
     }
   }
   if (!partial) finishAttack(s, ctx, key);
@@ -384,14 +393,17 @@ export function drawEvent(s: GameState): void {
 export function gainItem(s: GameState, id: CardId): void {
   const def = itemDef(s, id);
   if (def.trap) return resolveTrapItem(s, id);
+  if (def.custom === 'item-list') return creechOnGain(s, id);
   const inst = { uid: `i${s.nextUid++}`, id, inHands: false, ...(def.uses ? { uses: def.uses } : {}) };
   // Si caben en las manos, se colocan ahí; si no, va a la mochila y el jugador reorganiza.
   const fits = def.hands > 0 && handsUsed(s) + def.hands <= 2;
   s.fg.items.push(inst);
   inst.inHands = fits;
-  const where = def.hands === 0 ? 'a la mochila' : fits ? 'a las manos' : 'a la mochila (no te caben en las manos)';
+  const where = def.custom === 'item-carolyn' ? 'contigo, no en la mochila' : def.hands === 0 ? 'a la mochila' : fits ? 'a las manos' : 'a la mochila (no te caben en las manos)';
   log(s, `Consigues: ${def.name} (va ${where}; mira «Tu equipo» abajo a la derecha).`, 'good', undefined, { kind: 'item', id });
   if (def.custom === 'item-motorboat') placeBoat(s);
+  creechOnGain(s, id);
+  mapleOnGain(s, id);
   if (def.hands > 0 && !fits) push(s, { t: 'arrange', optional: false });
 }
 
@@ -410,6 +422,8 @@ function placeBoat(s: GameState): void {
 export function discardItem(s: GameState, uid: string): void {
   const it = s.fg.items.find((i) => i.uid === uid);
   if (!it) return;
+  // Carolyn nunca se descarta; Mr. Floppy vuelve a un mazo (o no se puede descartar todavía).
+  if (creechDiscardGuard(s, it)) return;
   s.fg.items = s.fg.items.filter((i) => i !== it);
   s.itemDiscard.push(it.id);
   log(s, `Se descarta ${itemDef(s, it.id).name}.`);
@@ -444,6 +458,7 @@ function victimsStepTowardKiller(s: GameState): void {
 // ---------------------------------------------------------------- efectos únicos
 
 function runCustomEffect(s: GameState, id: string, src: EffectSource): void {
+  if (isBirds(s) && BIRDS_NOOP.has(id)) return;
   switch (id) {
     case 'discard-next-horror': {
       const card = s.horrorDeck.shift();
@@ -503,8 +518,10 @@ function runCustomEffect(s: GameState, id: string, src: EffectSource): void {
 
 
 export function teleportKiller(s: GameState, zone: ZoneId): void {
+  if (isBirds(s)) return birdsPlaceKiller(s, zone);
+  const from = s.killer.zone;
   s.killer.zone = zone;
-  log(s, `¡${killerDef(s).name} aparece en ${zoneName(s, zone)}!`, 'killer', { kind: 'killerMove', path: [zone] });
+  log(s, `¡${killerDef(s).name} aparece en ${zoneName(s, zone)}!`, 'killer', { kind: 'killerMove', path: from === zone ? [zone] : [from, zone] });
   onKillerEnter(s);
 }
 

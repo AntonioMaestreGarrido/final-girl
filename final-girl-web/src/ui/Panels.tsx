@@ -1,5 +1,7 @@
 import { ACTION_BACK } from '../content';
-import { boardDef, eventDef, fgDef, horrorDef, itemDef, killerDef, killerRow, locationDef, type GameState } from '../engine';
+import { boardDef, brVisible, eventDef, fgDef, horrorDef, itemDef, killerDef, killerRow, locationDef, zoneName, type GameState } from '../engine';
+import { asset } from './asset';
+import { Meeple } from './Meeple';
 import { finalGirlCaption, itemCaption, killerActionText } from './captions';
 import { CardImg } from './Zoom';
 import type { WrathId } from '../content/types';
@@ -25,6 +27,57 @@ function WrathTrack({ state, id }: { state: GameState; id: WrathId }) {
   );
 }
 
+/** Sala de Calderas (Dr. Fright): las zonas ya reveladas de cada carta, tal como quedan al deslizar el mazo. */
+function BoilerRoom({ state }: { state: GameState }) {
+  const m = state.maple;
+  if (!m || killerDef(state).id !== 'dr-fright') return null;
+  const base = 'assets/killers/dr-fright/boiler';
+  const W = 76;
+  const H = 106;
+  const xs = m.br.placed.map((c) => c.x);
+  const ys = m.br.placed.map((c) => c.y);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const width = ((Math.max(...xs) - minX) + 2) * (W / 2);
+  const height = ((Math.max(...ys) - minY) + 2) * (H / 2);
+  return (
+    <div className={`boiler ${m.asleep ? 'asleep' : 'awake'}`}>
+      <div className="track-label">
+        {m.asleep ? 'Dormida · Sala de Calderas' : 'Despierta'}
+        {m.asleep && <small className="muted"> · quedan {m.br.deck.length} de 4 cartas por revelar</small>}
+      </div>
+      {m.asleep ? (
+        <div className="boiler-stack" style={{ width, height }} data-tip="Las zonas visibles de las cartas de la Sala de Calderas. El Dr. Fright aparece una sola vez en cada una; si sale en la zona recién revelada, te ataca.">
+          {m.br.placed.map((c, i) => {
+            const z = m.br.placed.length - i;
+            if (c.id === 'dd') {
+              return <img key="dd" className="boiler-dd" src={asset(`${base}/asleep.webp`)} alt="Dormida" style={{ left: (c.x - minX) * (W / 2), top: (c.y - minY) * (H / 2), width: W, height: H, zIndex: z }} />;
+            }
+            return brVisible(m.br.placed, i).map((v) => (
+              <div
+                key={`${c.id}-${v.qx}-${v.qy}`}
+                className="boiler-quad"
+                style={{
+                  left: (c.x - minX + v.qx) * (W / 2),
+                  top: (c.y - minY + v.qy) * (H / 2),
+                  width: W / 2,
+                  height: H / 2,
+                  backgroundImage: `url(${asset(`${base}/${c.id}.webp`)})`,
+                  backgroundSize: `${W}px ${H}px`,
+                  backgroundPosition: `-${v.qx * (W / 2)}px -${v.qy * (H / 2)}px`,
+                  zIndex: z,
+                }}
+              />
+            ));
+          })}
+        </div>
+      ) : (
+        <img className="boiler-awake" src={asset(`${base}/awake.webp`)} alt="Despierta" style={{ width: W }} />
+      )}
+    </div>
+  );
+}
+
 function HealthBar({ hp, max, token }: { hp: number; max: number; token: 'black' | 'white' }) {
   return (
     <div className="health" data-tip={`Vida: ${hp} de ${max}. El primer corazón es la ficha de Vida Final (${token === 'black' ? 'negra, aún sin revelar' : 'blanca, ya revelada'}).`}>
@@ -41,6 +94,37 @@ function HealthBar({ hp, max, token }: { hp: number; max: number; token: 'black'
 const has2 = (state: GameState, custom: string) =>
   state.killer.darkPowers.some((dp) => dp.revealed && killerDef(state).darkPowers.find((d) => d.id === dp.id)?.custom === custom);
 
+const BIRD_ROWS = ['Inicio', 'Evento', '+1 Terror', 'Poder Oscuro', '+1 Terror'];
+
+/** Terror from Above: resumen de los Pájaros y de las Víctimas Especiales (lo que hay que salvar). */
+function BirdsStatus({ state }: { state: GameState }) {
+  const b = state.birds;
+  const k = killerDef(state);
+  if (!b || !k.minion) return null;
+  const inPlay = state.victims.filter((v) => v.bsp).length;
+  const wall = state.activeHorror.includes('muro-de-aves');
+  return (
+    <div className="minions-panel">
+      <CardImg src={k.minion.reference} alt="Carta de Generar Pájaros" className="minion-ref" caption={`Generar Pájaros
+Tira 2 dados: uno es el número de Pájaros y el otro decide dónde van.
+1 distribuidos en cualquier espacio · 2 cualquier espacio individual · 3 más cerca de Búsqueda · 4 más cerca de Salida · 5 espacio de la Víctima más cercana · 6 tu espacio
+${k.minion.text}`} />
+      <div>
+        <div className="track-label">Pájaros</div>
+        <div className="minion-tokens" data-tip="Pájaros en el tablero. Pierdes si hay 3 en cada espacio.">
+          <span>En el tablero <b>{state.minions.length}</b></span>
+          {wall && <span data-tip="Muro de aves: fichas sobre la carta (con 5 se retira)">Muro <b>{b.wall}/5</b></span>}
+        </div>
+        <div className="minion-tokens" data-tip="Para ganar tienes que salvar a TODAS las Víctimas Especiales. Salen de su escondite al desbloquear tu Habilidad Definitiva o cuando no quedan Víctimas normales; nunca pueden ser atacadas ni asesinadas.">
+          <span>Especiales salvadas <b>{b.saved}/{b.total}</b></span>
+          <span>En juego <b>{inPlay}</b></span>
+          <span>Escondidas <b>{b.hidden}</b></span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function KillerPanel({ state }: { state: GameState }) {
   const k = killerDef(state);
   const row = killerRow(state);
@@ -49,16 +133,23 @@ export function KillerPanel({ state }: { state: GameState }) {
   return (
     <section className="panel killer-panel">
       <h3>{k.name}</h3>
-      <HealthBar hp={state.killer.health.hp} max={state.killer.health.max} token={state.killer.health.token} />
-      <div className="stats">
+      {k.birds ? null : k.invulnerable ? (
+        <p className="muted" data-tip="No tiene Vida y no se le puede atacar, dañar ni eliminar. La única forma de ganar es llevar a Carolyn a una zona de Salida.">Sin Vida: no se le puede atacar.</p>
+      ) : (
+        <HealthBar hp={state.killer.health.hp} max={state.killer.health.max} token={state.killer.health.token} />
+      )}
+      {k.birds && <CardImg src={k.board} alt="Carta de Sed de Sangre" className="wide" caption={`Sed de Sangre
+Casillas de abajo a arriba: Inicio, Evento, +1 Terror, Poder Oscuro, +1 Terror.
+Máximo: ${k.bloodlustMaxText}.`} />}
+      <div className="stats" hidden={!!k.birds}>
         <span className="stat attack" data-tip={`Valor de Ataque: daño de cada ataque de ${k.name}.`}>⚔ {row.attack}</span>
         <span className="stat move" data-tip="Valor de Movimiento: zonas por cada icono de movimiento.">👢 {row.move}</span>
         <span className="stat" data-tip="Sed de Sangre: sube cada vez que muere una Víctima.">🩸 {state.killer.bloodlust}/{k.bloodlust.length - 1}</span>
       </div>
       <div className="bloodlust">
         {k.bloodlust.map((r, i) => (
-          <span key={i} className={`bl ${i === state.killer.bloodlust ? 'now' : ''} ${i < state.killer.bloodlust ? 'past' : ''} ${r.revealDarkPower ? 'dp' : ''} ${extraTrack?.rows[i - 1]?.text ? 'extra' : ''}`} data-tip={`Sed de Sangre ${i}: Ataque ${r.attack}, Movimiento ${r.move}${r.effects.length ? '. Al llegar: +1 Terror' : ''}${r.revealDarkPower ? '. Al llegar: se revela el Poder Oscuro' : ''}${extraTrack?.rows[i - 1]?.text ? `. Track de ${locationDef(state).name}: ${extraTrack.rows[i - 1]!.text}` : ''}${i === k.bloodlust.length - 1 ? `. Máximo: cada aumento extra, ${k.bloodlustMaxText ?? `${k.name} se cura 1 y se descarta la siguiente carta de Horror`}` : ''}`}>
-            {r.attack}/{r.move}
+          <span key={i} className={`bl ${i === state.killer.bloodlust ? 'now' : ''} ${i < state.killer.bloodlust ? 'past' : ''} ${r.revealDarkPower ? 'dp' : ''} ${extraTrack?.rows[i - 1]?.text ? 'extra' : ''}`} data-tip={`Sed de Sangre ${i}: ${k.birds ? BIRD_ROWS[i] : `Ataque ${r.attack}, Movimiento ${r.move}`}${r.effects.length ? '. Al llegar: +1 Terror' : ''}${r.revealDarkPower ? '. Al llegar: se revela el Poder Oscuro' : ''}${extraTrack?.rows[i - 1]?.text ? `. Track de ${locationDef(state).name}: ${extraTrack.rows[i - 1]!.text}` : ''}${i === k.bloodlust.length - 1 ? `. Máximo: cada aumento extra, ${k.bloodlustMaxText ?? `${k.name} se cura 1 y se descarta la siguiente carta de Horror`}` : ''}`}>
+            {k.birds ? BIRD_ROWS[i] : `${r.attack}/${r.move}`}
           </span>
         ))}
       </div>
@@ -85,7 +176,9 @@ ${def.text}` : 'Poder Oscuro boca abajo: se revela al llegar a su casilla de Sed
           );
         })}
       </div>
-      {k.minion && (
+      <BoilerRoom state={state} />
+      <BirdsStatus state={state} />
+      {k.minion && !k.birds && (
         <div className="minions-panel">
           <CardImg src={k.minion.reference} alt={`Carta de ${k.minion.plural}`} className="minion-ref" caption={`${k.minion.plural}
 ${k.minion.text}`} />
@@ -104,10 +197,10 @@ ${k.minion.text}`} />
         <div className="card-row">
           {state.killer.minors.map((m) => (
             <div className="slot" key={m.id}>
-              <small>Poder Oscuro Menor · {m.hp} ♥</small>
+              <small>Poder Oscuro Menor{k.invulnerable ? '' : ` · ${m.hp} ♥`}</small>
               <CardImg src={horrorDef(state, m.id).image} alt={horrorDef(state, m.id).name} caption={`${horrorDef(state, m.id).name}
 ${horrorDef(state, m.id).text}
-Tus golpes quitan primero sus Vidas (${m.hp}); al perderlas, se descarta.`} />
+${k.invulnerable ? 'Se retira del juego cuando Carolyn se une a ti.' : `Tus golpes quitan primero sus Vidas (${m.hp}); al perderlas, se descarta.`}`} />
             </div>
           ))}
         </div>
@@ -119,6 +212,18 @@ Tus golpes quitan primero sus Vidas (${m.hp}); al perderlas, se descarta.`} />
       </div>
     </section>
   );
+}
+
+/** Centro de cada hueco de Víctima Salvada en la carta (fracciones del ancho y alto), según cuántos huecos tiene. */
+function rescueSlotPos(i: number, n: number): { x: number; y: number } {
+  const cols = [0.11, 0.3, 0.48];
+  const offset = [0.21, 0.39];
+  const row1 = n === 4 ? 2 : 3;
+  const y = i < row1 ? 0.4 : 0.78;
+  if (i < row1) return { x: cols[i]!, y };
+  const j = i - row1;
+  if (n === 4) return { x: cols[j]!, y };
+  return { x: n === 5 ? offset[j]! : cols[j]!, y };
 }
 
 export function FinalGirlPanel({ state }: { state: GameState }) {
@@ -153,7 +258,18 @@ export function FinalGirlPanel({ state }: { state: GameState }) {
       </div>
 
       <div className="card-row">
-        <CardImg src={state.fg.ultimate ? fg.ultimateImage : fg.image} alt={fg.name} className="wide fg-card" caption={finalGirlCaption(fg, state.fg.ultimate)} />
+        <div className="fg-card-wrap">
+          <CardImg src={state.fg.ultimate ? fg.ultimateImage : fg.image} alt={fg.name} className="wide fg-card" caption={finalGirlCaption(fg, state.fg.ultimate)} />
+          {!state.fg.ultimate && state.fg.rescueSlots.map((used, i) => {
+            if (!used) return null;
+            const p = rescueSlotPos(i, fg.rescueSlots.length);
+            return (
+              <span key={i} className="rescued-token" style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }} data-tip={`Víctima salvada: ${fg.rescueSlots[i]!.text}`}>
+                <Meeple color="#f2c230" />
+              </span>
+            );
+          })}
+        </div>
       </div>
       <div className="rescue-slots">
         {fg.rescueSlots.map((slot, i) => (
@@ -177,7 +293,7 @@ export function LocationPanel({ state }: { state: GameState }) {
         {loc.itemDecks.map((zone) => {
           const deck = state.itemDecks[zone] ?? [];
           const top = deck[0];
-          const name = loc.zones.find((z) => z.id === zone)!.label;
+          const name = zoneName(state, zone);
           return (
             <div className="slot" key={zone}>
               <small>Mazo de {name} ({deck.length})</small>

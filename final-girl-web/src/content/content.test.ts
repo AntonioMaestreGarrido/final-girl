@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ACTION_BACK, ACTION_CARDS, CORE_ASSETS, FILMS, PLAYER_BOARDS } from './index';
+import { ACTION_BACK, ACTION_CARDS, CORE_ASSETS, FILMS, PLAYER_BOARDS, TERROR_FROM_ABOVE } from './index';
 import type { Effect } from './types';
 
 const PUBLIC = join(__dirname, '..', '..', 'public');
@@ -65,7 +65,8 @@ describe.each(FILMS.map((f) => [f.id, f] as const))('Película %s', (_, film) =>
       for (const { to } of zone.flee) {
         expect(zoneIds.has(to), `${zone.id} → ${to}`).toBe(true);
         const back = location.zones.find((z) => z.id === to)!;
-        expect(back.flee.some((f) => f.to === zone.id), `${to} ↛ ${zone.id}`).toBe(true);
+        const oneWay = (location.oneWay ?? []).some((o) => o.from === zone.id && o.to === to);
+        expect(back.flee.some((f) => f.to === zone.id) || oneWay, `${to} ↛ ${zone.id}`).toBe(true);
       }
     }
   });
@@ -79,11 +80,11 @@ describe.each(FILMS.map((f) => [f.id, f] as const))('Película %s', (_, film) =>
         if (!seen.has(to)) seen.add(to), queue.push(to);
       }
     }
-    expect(seen.size).toBe(location.zones.length);
+    expect(seen.size).toBe(location.zones.filter((z) => !z.hidden).length);
   });
 
   it('cada mazo de Objetos corresponde a una zona de Búsqueda', () => {
-    const search = location.zones.filter((z) => z.search).map((z) => z.id).sort();
+    const search = [...new Set(location.zones.filter((z) => z.search).map((z) => z.deck ?? z.id))].sort();
     expect([...location.itemDecks].sort()).toEqual(search);
   });
 
@@ -112,6 +113,41 @@ describe.each(FILMS.map((f) => [f.id, f] as const))('Película %s', (_, film) =>
 
   it('el tablero del Asesino tiene una fila de Poder Oscuro', () => {
     expect(killer.bloodlust.filter((r) => r.revealDarkPower)).toHaveLength(1);
+  });
+});
+
+describe('The Haunting of Creech Manor: recuento de componentes', () => {
+  const film = FILMS.find((f) => f.id === 'creech')!;
+  it('coincide con las hojas de componentes', () => {
+    expect(count(film.killer.horror)).toBe(16);
+    expect(film.killer.finales).toHaveLength(3);
+    expect(film.killer.darkPowers.filter((d) => !d.epic)).toHaveLength(3);
+    expect(film.killer.darkPowers.filter((d) => d.epic)).toHaveLength(1);
+    expect(count(film.location.horror)).toBe(8);
+    expect(film.location.events).toHaveLength(10);
+    expect(film.location.setups).toHaveLength(5);
+    expect(film.location.items).toHaveLength(18);
+    // Carolyn y Mr. Floppy son cartas de Objeto del Poltergeist.
+    expect(film.killer.items).toHaveLength(2);
+    expect(film.location.zones.filter((z) => !z.hidden)).toHaveLength(21);
+    expect(film.finalGirls).toHaveLength(2);
+  });
+});
+
+describe('Frightmare on Maple Lane: recuento de componentes', () => {
+  const film = FILMS.find((f) => f.id === 'maple')!;
+  it('coincide con las hojas de componentes', () => {
+    expect(count(film.killer.horror)).toBe(16);
+    expect(film.killer.finales).toHaveLength(3);
+    expect(film.killer.darkPowers.filter((d) => !d.epic)).toHaveLength(3);
+    expect(film.killer.darkPowers.filter((d) => d.epic)).toHaveLength(1);
+    expect(count(film.location.horror)).toBe(8);
+    expect(film.location.events).toHaveLength(10);
+    expect(film.location.setups).toHaveLength(5);
+    expect(film.location.items).toHaveLength(16);
+    expect(film.location.zones).toHaveLength(21);
+    expect(film.location.zones.filter((z) => z.house)).toHaveLength(12);
+    expect(film.finalGirls).toHaveLength(2);
   });
 });
 
@@ -148,5 +184,22 @@ describe('Slaughter in the Groves: recuento de componentes', () => {
     expect(film.location.wrath?.levels).toHaveLength(10);
     expect(film.location.bloodlustTrack?.rows).toHaveLength(7);
     expect(count(ACTION_CARDS.filter((c) => c.onlyWith?.includes('inkanyamba')))).toBe(2);
+  });
+});
+
+describe('Terror from Above: recuento de componentes', () => {
+  const { killer, finalGirls } = TERROR_FROM_ABOVE;
+  it('coincide con las hojas de componentes', () => {
+    expect(count(killer.horror)).toBe(17);
+    expect(killer.finales).toHaveLength(3);
+    expect(killer.darkPowers).toHaveLength(3);
+    expect(killer.bloodlust).toHaveLength(5);
+    expect(killer.bloodlust.filter((r) => r.revealDarkPower)).toHaveLength(1);
+    expect(finalGirls.map((f) => f.id)).toEqual(['paula', 'melanie']);
+  });
+
+  it('empieza en una casilla numerada del medidor de Terror y todas las imágenes existen', () => {
+    for (const board of Object.values(PLAYER_BOARDS)) expect(board.terrorTrack.some((p) => p.label === killer.startTerror)).toBe(true);
+    expect(imagePaths([killer, finalGirls]).filter((p) => !exists(p))).toEqual([]);
   });
 });

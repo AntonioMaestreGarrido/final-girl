@@ -17,8 +17,11 @@ import {
   victimLabel,
 } from './core';
 import { discardItem, spendUse } from './effects';
+import { creechCancelAttack } from './creech';
+import { damageMinionsAt } from './enemies';
+import { mapleAfterAttack, mapleCanHitFG, mapleStopOptions, mp, tridentUid } from './maple';
 import { choice, registerChoice } from './registry';
-import { actionDef, distances, fgDef, killerDef, shortestPaths, victimsIn, zoneName } from './lookup';
+import { actionDef, distances, fgDef, killerDef, killerIn, shortestPaths, victimsIn, zoneName } from './lookup';
 import type { EffectSource, GameState, Input, Target, Task, Victim, VictimRole } from './state';
 
 type KillerTask = Extract<Task, { t: 'killerAction' }>;
@@ -133,8 +136,15 @@ function computeTarget(s: GameState, task: KillerTask): Target | 'tie' {
     return 'tie';
   }
 
+  // El Novio (Maple Lane): si el Asesino va a por ti, va a por tu Novio.
+  if (task.action.target === 'finalGirl' && s.activeEvents.includes('novio')) {
+    const nv = s.victims.find((v) => v.role === 'novio-ml');
+    if (nv) return { kind: 'zone', zone: nv.zone, who: 'victim' };
+  }
   const pool = targetableVictims(s, a.kind === 'victim' ? a.id : undefined);
   let { target } = task.action;
+  // Dr. Fright Despierto: 'el más cercano' se trata como Víctima (solo te ataca con La Frightsadilla o Realidad borrosa).
+  if (a.kind === 'killer' && !mapleCanHitFG(s) && (target === 'nearest' || target === 'victimElseFG')) target = 'victim';
   if (target === 'victimElseFG') target = pool.length ? 'victim' : 'finalGirl';
   if (target === 'finalGirl') return { kind: 'zone', zone: s.fg.zone, who: 'finalGirl' };
 
@@ -271,6 +281,7 @@ export function stepKillerAction(s: GameState, task: KillerTask): 'done' | 'cont
       const t = task.target!;
       const here = actorZone(s, task);
       if (task.action.moves === 0 || t.kind === 'none' || t.zone === here) {
+        if (task.action.killAlong) killAlongPath(s, task, [here]);
         task.step = afterMove(task);
         return 'continue';
       }
@@ -300,9 +311,25 @@ export function stepKillerAction(s: GameState, task: KillerTask): 'done' | 'cont
     }
     case 'move': {
       const path = task.path ?? [];
+      if (!task.stopChecked) {
+        task.stopChecked = true;
+        const stop = mapleStopOptions(s, path);
+        if (stop !== null) {
+          push(s, choice(`Un Enemigo se acerca (${path.map((z) => zoneName(s, z)).join(' → ')}). ¿Descartas el Crucifijo para detenerlo al llegar a ${zoneName(s, path[stop]!)}?`, [
+            { id: 'yes', label: 'Sí: termina su movimiento allí' },
+            { id: 'no', label: 'No' },
+          ], { kind: 'custom', id: 'ml-crucifix-stop', data: { i: stop } }));
+          return 'continue';
+        }
+      }
       const ent = actorEntity(s, task)!;
       const walked: ZoneId[] = [ent.zone];
-      const anim = () => ({ kind: 'killerMove' as const, path: walked });
+      const actor = actorOf(task);
+      const anim = () => ({
+        kind: 'killerMove' as const,
+        path: walked,
+        ...(actor.kind === 'minion' ? { minion: actor.id } : actor.kind === 'victim' ? { victim: actor.id } : {}),
+      });
       for (const z of path) {
         // Corre, yo les entretendré: el Prometido muere en tu lugar y el Enemigo se queda donde está.
         const fiance = z === s.fg.zone ? s.victims.find((v) => v.role === 'prometido' && v.zone === z) : undefined;
@@ -313,6 +340,20 @@ export function stepKillerAction(s: GameState, task: KillerTask): 'done' | 'cont
         }
         ent.zone = z;
         walked.push(z);
+        // Trampa para tontos y Fuego (Maple Lane): afectan a cualquier Enemigo que entre.
+        const junk = s.tokens.find((x) => x.zone === z && x.id === 'trampa-para-tontos');
+        if (junk) {
+          s.tokens = s.tokens.filter((x) => x !== junk);
+          log(s, `¡${name} cae en la Trampa para tontos: 2 de daño!`, 'good');
+          if (a.kind === 'killer') damageKiller(s, 2);
+          else damageMinionsAt(s, z, 2);
+        }
+        if (s.tokens.some((x) => x.zone === z && x.id === 'fuego')) {
+          log(s, `${name} entra en la Casa en llamas: 1 de daño.`, 'good');
+          if (a.kind === 'killer') damageKiller(s, 1);
+          else damageMinionsAt(s, z, 1);
+        }
+        if (s.outcome) return 'continue';
         if (a.kind !== 'killer') continue;
         const trap = s.tokens.find((x) => x.zone === z && x.id === 'trampa-para-osos');
         if (trap) {
@@ -331,6 +372,7 @@ export function stepKillerAction(s: GameState, task: KillerTask): 'done' | 'cont
       }
       if (walked.length > 1) log(s, `${name} se mueve: ${walked.map((w) => zoneName(s, w)).join(' → ')}.`, 'killer', anim());
       if (walked.length > 1 && a.kind === 'killer') onKillerEnter(s);
+      if (task.action.killAlong) killAlongPath(s, task, [...new Set(walked)]);
       task.step = afterMove(task);
       return 'continue';
     }
@@ -338,7 +380,7 @@ export function stepKillerAction(s: GameState, task: KillerTask): 'done' | 'cont
       task.step = 'attack';
       task.attacksLeft = task.action.attacks;
       const spray = itemsWith(s, 'item-pepper-spray')[0];
-      if (a.kind === 'killer' && spray && task.action.attacks > 0 && s.killer.zone === s.fg.zone && s.phase === 'killer') {
+      if (a.kind === 'killer' && spray && task.action.attacks > 0 && killerIn(s, s.fg.zone) && s.phase === 'killer') {
         push(s, choice(`${kname(s)} está en tu zona. ¿Usas el Spray de pimienta?`, [
           { id: 'yes', label: 'Sí: termina la fase del Asesino' },
           { id: 'no', label: 'No' },
@@ -379,6 +421,14 @@ function joinTheFamily(s: GameState): void {
   damageFG(s, s.fg.health.hp);
 }
 
+/** ¡Que viene, que viene!: muere una Víctima en cada espacio por el que pasa el Enemigo. */
+function killAlongPath(s: GameState, task: KillerTask, zones: ZoneId[]): void {
+  for (const z of zones) {
+    const here = victimsIn(s, z).filter((v) => v.role !== 'lobo').sort((x, y) => (x.role ? 1 : 0) - (y.role ? 1 : 0));
+    if (here[0]) killByAttack(s, task, here[0]);
+  }
+}
+
 function describeTarget(s: GameState, t: Target): string {
   if (t.kind !== 'zone') return 'nadie';
   if (t.who === 'finalGirl') return fgDef(s).name;
@@ -386,6 +436,16 @@ function describeTarget(s: GameState, t: Target): string {
   if (t.who === 'victim' && s.victims.some((v) => v.role === 'super' && v.zone === t.zone) && s.activeEvents.includes('el-super-turista')) return `el Super Turista en ${zoneName(s, t.zone)}`;
   return `${t.who === 'victim' ? 'las Víctimas' : 'lo que hay'} en ${zoneName(s, t.zone)}`;
 }
+
+registerChoice('ml-crucifix-stop', (s, option, data) => {
+  if (option !== 'yes') return;
+  const cross = itemsWith(s, 'item-ml-crucifix')[0];
+  if (!cross) return;
+  discardItem(s, cross.uid);
+  const t = currentKillerTask(s);
+  t.path = (t.path ?? []).slice(0, (data.i as number) + 1);
+  log(s, 'El Crucifijo detiene al Enemigo.', 'good');
+});
 
 registerChoice('pepper-spray', (s, option, data) => {
   if (option !== 'yes') return;
@@ -409,7 +469,7 @@ function performAttack(s: GameState, task: KillerTask): void {
   if (a.kind === 'killer' && customs.has('dp-hammer-massacre')) {
     // Ataca a la Chica Final y a cada Víctima de su zona una vez.
     for (const v of victims) killByAttack(s, task, v);
-    if (fgHere) {
+    if (fgHere && (a.kind !== 'killer' || mapleCanHitFG(s))) {
       task.attackedFG = true;
       push(s, attackFGTask(s, task));
     }
@@ -417,7 +477,8 @@ function performAttack(s: GameState, task: KillerTask): void {
   }
 
   const targetsFG = task.target?.kind === 'zone' && task.target.who === 'finalGirl';
-  if (fgHere && (targetsFG || !victims.length)) {
+  const canFG = a.kind !== 'killer' || mapleCanHitFG(s);
+  if (fgHere && canFG && (targetsFG || !victims.length)) {
     task.attackedFG = true;
     push(s, attackFGTask(s, task));
     return;
@@ -448,28 +509,43 @@ function killByAttack(s: GameState, task: KillerTask, v: GameState['victims'][nu
 
 // ---------------------------------------------------------------- ataque a la Chica Final
 
+/** Aplica el daño de un ataque a la Chica Final (con el efecto de Asalto del tridente). */
+function applyAttackDamage(s: GameState, task: AttackTask): void {
+  // Pájaros contra una Víctima de tu espacio: con que quede 1 de daño, muere.
+  if (task.victim) {
+    const v = s.victims.find((x) => x.id === task.victim);
+    if (v && task.damage > 0) killVictim(s, v, true);
+    return;
+  }
+  const before = s.fg.health.hp;
+  damageFG(s, task.damage);
+  mapleAfterAttack(s, parseActor(task.by).kind === 'killer', before);
+}
+
 export function stepAttackFG(s: GameState, task: AttackTask): 'done' | 'wait' {
+  if (creechCancelAttack(s)) return 'done';
   const by = parseActor(task.by);
+  if (by.kind === 'killer' && s.maple) mp(s).attackedFG = true;
   const attacker = task.by === 'wolf' ? 'El Hombre Lobo' : by.kind === 'killer' ? kname(s) : by.kind === 'minion' ? (killerDef(s).minion?.name ?? 'Un Esbirro') : 'Una Víctima-Marioneta';
   if (task.damage <= 0) {
-    log(s, `El ataque de ${attacker} no te hace daño.`, 'good');
+    log(s, task.victim ? `El ataque de ${attacker} no llega a hacer daño: la Víctima se salva.` : `El ataque de ${attacker} no te hace daño.`, 'good');
     return 'done';
   }
   const opts = reactionOptions(s);
-  if (!opts.cards.length && !opts.lid && !opts.spray) {
-    log(s, `${attacker} te ataca: ${task.damage} de daño.`, 'killer');
-    damageFG(s, task.damage);
+  if (!opts.cards.length && !opts.lid && !opts.spray && !opts.trident) {
+    log(s, task.victim ? `${attacker} atacan a una Víctima de tu espacio.` : `${attacker} te ataca: ${task.damage} de daño.`, 'killer');
+    applyAttackDamage(s, task);
     return 'done';
   }
-  s.prompt = { type: 'react', damage: task.damage, cards: opts.cards, lid: opts.lid, spray: opts.spray };
+  s.prompt = { type: 'react', damage: task.damage, cards: opts.cards, lid: opts.lid, spray: opts.spray, trident: opts.trident };
   return 'wait';
 }
 
 function reactionOptions(s: GameState) {
   const cards = [...new Set(s.fg.hand.filter((c) => actionDef(c).timing === 'reaction'))];
   const lid = itemsWith(s, 'item-trash-lid')[0]?.uid ?? null;
-  const spray = s.phase === 'killer' && s.killer.zone === s.fg.zone ? (itemsWith(s, 'item-pepper-spray')[0]?.uid ?? null) : null;
-  return { cards, lid, spray };
+  const spray = s.phase === 'killer' && killerIn(s, s.fg.zone) ? (itemsWith(s, 'item-pepper-spray')[0]?.uid ?? null) : null;
+  return { cards, lid, spray, trident: tridentUid(s) };
 }
 
 export function inputAttackFG(s: GameState, task: AttackTask, input: Input): 'done' | 'continue' {
@@ -498,9 +574,17 @@ export function inputAttackFG(s: GameState, task: AttackTask, input: Input): 'do
       endPhaseNow(s, '¡Spray de pimienta! La fase del Asesino termina.');
       return 'continue';
     }
+    case 'useTrident': {
+      const uid = tridentUid(s);
+      if (!uid) throw new RuleError('No tienes el Tridente en las manos');
+      discardItem(s, uid);
+      task.damage = 0;
+      log(s, 'Descartas el Tridente: evitas el daño del ataque.', 'good');
+      return 'continue';
+    }
     case 'takeHit':
       log(s, `Te atacan: ${task.damage} de daño.`, 'killer');
-      damageFG(s, task.damage);
+      applyAttackDamage(s, task);
       return 'done';
     default:
       throw new RuleError('Respuesta no válida para un ataque');

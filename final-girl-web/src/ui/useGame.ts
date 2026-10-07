@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { fxDuration } from './moveFx';
 import { canUndo, deserialize, newGame, play, serialize, undo, type Game, type GameConfig, type Input } from '../engine';
 
 const SAVE_KEY = 'final-girl:partida';
@@ -10,9 +11,11 @@ export interface Settings {
   pacing: Pacing;
   /** Milisegundos entre pasos en modo automático. */
   speed: number;
+  /** Resaltar en el tablero los movimientos y muertes automáticos (recorrido, pulso y aviso). */
+  highlight: boolean;
 }
 
-const DEFAULT_SETTINGS: Settings = { pacing: 'auto', speed: 550 };
+const DEFAULT_SETTINGS: Settings = { pacing: 'auto', speed: 550, highlight: true };
 
 function readJSON<T>(key: string): T | null {
   try {
@@ -58,6 +61,8 @@ export function useGame(initial: Game, settings: Settings, hold = false) {
   const [shown, setShown] = useState(initial.state.log.length);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
+  /** Duración del resalte de la última entrada revelada: el siguiente paso espera a que termine. */
+  const fxWait = useRef(0);
 
   // Autoguardado.
   useEffect(() => {
@@ -75,14 +80,20 @@ export function useGame(initial: Game, settings: Settings, hold = false) {
   // Modo automático: revela una entrada cada `speed` ms.
   useEffect(() => {
     if (!revealing || settings.pacing !== 'auto' || hold) return;
-    timer.current = window.setTimeout(() => setShown((n) => Math.min(total, n + 1)), settings.speed);
+    const delay = Math.max(settings.speed, settings.highlight ? fxWait.current : 0);
+    timer.current = window.setTimeout(() => {
+      fxWait.current = fxDuration(game.state.log[shown]?.anim);
+      setShown((n) => Math.min(total, n + 1));
+    }, delay);
     return () => {
       if (timer.current) window.clearTimeout(timer.current);
     };
-  }, [revealing, shown, total, settings.pacing, settings.speed, hold]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealing, shown, total, settings.pacing, settings.speed, settings.highlight, hold]);
 
   const send = useCallback((input: Input) => {
     setError(null);
+    fxWait.current = 0;
     setGame((g) => {
       try {
         return play(g, input);

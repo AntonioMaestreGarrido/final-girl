@@ -3,8 +3,10 @@ import {
   adrenalineDice,
   changeTime,
   damageFG,
+  damageKiller,
   has,
   itemsWith,
+  killerShielded,
   log,
   moveVictim,
   push,
@@ -17,8 +19,42 @@ import {
 import { increaseWrath } from './wrath';
 import { dealDamage, describeEffects, discardItem, gainItem, spendUse, zappoSearchZones } from './effects';
 import { charlieCanUltimate, charlieUltimate, junkSearchPenalty, mirrorsAfterRoll, onFgEnter, removeLegTrap, resolveTrapItem } from './carnival';
-import { enemyInRange, enemyZones } from './enemies';
-import { actionDef, boardDef, distance, fgDef, horrorDef, itemDef, killerDef, locationDef, neighbors, victimsIn, zoneDef, zoneName } from './lookup';
+import { damageMinionsAt, enemyInRange, enemyZones, minionsAt } from './enemies';
+import { birdsOnFgEnter, birdsOnSpecialSaved, birdsWallBlocks } from './birds';
+import {
+  convinceTargets,
+  mapleAdjustDice,
+  mapleAfterCard,
+  mapleCanFollow,
+  mapleCardPlayable,
+  mapleFilterDestinations,
+  mapleItemActions,
+  mapleLockedHouses,
+  mapleOnFgEnter,
+  mapleRescuable,
+  mapleUseItem,
+  mp,
+  mapleAsleep,
+  searchableHere,
+} from './maple';
+import {
+  creechAdjustDice,
+  creechAfterRoll,
+  creechAliceUltimate,
+  creechBeforeAction,
+  creechCanFollow,
+  creechFilterDestinations,
+  creechFollowKiller,
+  creechItemActions,
+  creechMustFollow,
+  creechOnFgEnter,
+  creechPanicDestination,
+  creechPanicWhy,
+  creechUseItem,
+  cs,
+  strikeVictims,
+} from './creech';
+import { actionDef, boardDef, distance, fgDef, horrorDef, isBirds, itemDef, killerDef, killerIn, locationDef, neighbors, victimsIn, zoneDef, zoneName } from './lookup';
 import { rollDie } from './rng';
 import { choice, effectRolls, registerChoice, registerEffectRoll } from './registry';
 import * as grooves from './grooves';
@@ -47,26 +83,27 @@ export function weaponsFor(s: GameState, cardId: CardId): string[] {
       if (def.custom === 'item-hammer' && s.fg.health.hp < 4) return false;
       if (def.custom === 'item-hammer-charlie' && s.fg.health.hp < 2) return false;
       const max = def.range[1] + (def.custom === 'item-old-rifle' && zoneDef(s, s.fg.zone).sacred ? 2 : 0);
-      return enemyInRange(s, def.range[0], max) || (has(s, 'finale-friends') && s.victims.some((v) => v.role !== 'lobo' && distance(s, s.fg.zone, v.zone, 'fg') >= def.range![0] && distance(s, s.fg.zone, v.zone, 'fg') <= max));
+      return enemyInRange(s, def.range[0], max) || ((has(s, 'finale-friends') || strikeVictims(s)) && s.victims.some((v) => v.role !== 'lobo' && distance(s, s.fg.zone, v.zone, 'fg') >= def.range![0] && distance(s, s.fg.zone, v.zone, 'fg') <= max));
     })
     .map((it) => it.uid);
 }
 
 /** ¿Hay alguien a quien golpear sin arma (un Enemigo en tu zona o, con "Hice a tus amigos", una Víctima)? */
-const canPunch = (s: GameState) => enemyZones(s).includes(s.fg.zone) || (has(s, 'finale-friends') && victimsIn(s, s.fg.zone).some((v) => v.role !== 'lobo'));
+const canPunch = (s: GameState) => enemyZones(s).includes(s.fg.zone) || ((has(s, 'finale-friends') || strikeVictims(s)) && victimsIn(s, s.fg.zone).some((v) => v.role !== 'lobo'));
 
 export function playableCards(s: GameState): { cardId: CardId; weapons: string[] }[] {
   const out: { cardId: CardId; weapons: string[] }[] = [];
   for (const cardId of new Set(s.fg.hand)) {
     const def = actionDef(cardId);
     if (def.timing !== 'action') continue;
+    if (!mapleCardPlayable(s, cardId)) continue;
     if (dealsDamage(cardId)) {
       const weapons = weaponsFor(s, cardId);
       if (!canPunch(s) && !weapons.length) continue;
       out.push({ cardId, weapons });
       continue;
     }
-    if (def.results?.double.some((alt) => alt.some((e) => e.kind === 'search')) && !zoneDef(s, s.fg.zone).search && !zappoSearchZones(s).length) continue;
+    if (def.results?.double.some((alt) => alt.some((e) => e.kind === 'search')) && !searchableHere(s) && !zappoSearchZones(s).length) continue;
     out.push({ cardId, weapons: [] });
   }
   return out;
@@ -86,6 +123,8 @@ export function itemActions(s: GameState): ItemAction[] {
     if (!usable(s, it)) continue;
     const def = itemDef(s, it.id);
     const add = (action: string, label: string) => out.push({ uid: it.uid, action, label });
+    out.push(...creechItemActions(s, it, def.custom, time));
+    out.push(...mapleItemActions(s, it, def.custom, time));
     switch (def.custom) {
       case 'item-whistle':
         if (time >= 1 && !once(it.uid)) add('use', 'Silbato (1 Tiempo)');
@@ -135,6 +174,7 @@ export function itemActions(s: GameState): ItemAction[] {
         break;
     }
   }
+  if (mapleAsleep(s) && mp(s).br.deck.length) out.push({ uid: 'ml:br', action: 'resolve', label: 'Sala de Calderas: resolver una carta' });
   if (s.fg.legTrap && time >= 2) out.push({ uid: 'cn:legtrap', action: 'remove', label: 'Quitar la trampa de tu pierna (2 Tiempo)' });
   if (s.activeHorror.includes('la-volubilidad-de-los-dioses') && time >= 3) {
     out.push({ uid: 'horror:la-volubilidad-de-los-dioses', action: 'discard', label: 'Descartar La volubilidad de los dioses (3 Tiempo)' });
@@ -145,13 +185,45 @@ export function itemActions(s: GameState): ItemAction[] {
 const bowCost = (def: ItemCard) => (def.id === 'arco-de-laurie' ? 1 : 2);
 
 function reikoCanMove(s: GameState): boolean {
-  if (!has(s, 'ult-reiko') || s.mods.usedThisPhase.includes('ult-reiko')) return false;
+  if (isBirds(s) || !has(s, 'ult-reiko') || s.mods.usedThisPhase.includes('ult-reiko')) return false;
   const d = distance(s, s.fg.zone, s.killer.zone, 'fg');
   return d > 0 && d <= 2;
 }
 
+/** Melanie: una vez por fase de Acción, con algún Enemigo en su espacio. */
+function melanieCanUltimate(s: GameState): boolean {
+  if (!has(s, 'ult-melanie') || s.mods.usedThisPhase.includes('ult-melanie')) return false;
+  return minionsAt(s, s.fg.zone).length > 0 || (!isBirds(s) && s.killer.zone === s.fg.zone && !killerShielded(s));
+}
+
+function melanieUltimate(s: GameState): void {
+  s.mods.usedThisPhase.push('ult-melanie');
+  log(s, 'Habilidad Definitiva de Melanie: pierdes 1 Vida para repartir 2 de daño entre los Enemigos de tu espacio.', 'good');
+  damageFG(s, 1);
+  if (!s.outcome) melanieStrike(s, 2);
+}
+
+/** Reparte los puntos de daño de Melanie entre el Asesino (si está) y los Esbirros de su espacio. */
+function melanieStrike(s: GameState, left: number): void {
+  if (left <= 0 || s.outcome) return;
+  const minions = minionsAt(s, s.fg.zone).length;
+  const killer = !isBirds(s) && s.killer.zone === s.fg.zone && !killerShielded(s);
+  if (killer && minions) {
+    push(s, choice(`Melanie: ¿a quién va el siguiente punto de daño? (quedan ${left})`, [{ id: 'killer', label: killerDef(s).name }, { id: 'minions', label: `${killerDef(s).minion?.plural ?? 'Esbirros'} de tu espacio` }], { kind: 'custom', id: 'melanie-strike', data: { left } }));
+    return;
+  }
+  if (killer) return damageKiller(s, left);
+  if (minions) damageMinionsAt(s, s.fg.zone, left);
+}
+
+registerChoice('melanie-strike', (s, option, data) => {
+  if (option === 'killer') damageKiller(s, 1);
+  else damageMinionsAt(s, s.fg.zone, 1);
+  melanieStrike(s, (data.left as number) - 1);
+});
+
 export const rescuableVictims = (s: GameState) =>
-  zoneDef(s, s.fg.zone).exit && s.phase === 'action'
+  (zoneDef(s, s.fg.zone).exit || s.fg.zone === 'helicoptero') && s.phase === 'action' && mapleRescuable(s, s.fg.zone) && !birdsWallBlocks(s, s.fg.zone)
     ? victimsIn(s, s.fg.zone).filter((v) => v.role !== 'lobo' && (v.role !== 'maldita' || s.victims.length === 1))
     : [];
 
@@ -160,8 +232,9 @@ export function mainPrompt(s: GameState): Prompt {
     type: 'main',
     playable: playableCards(s),
     itemActions: itemActions(s),
-    ultimate: reikoCanMove(s) || charlieCanUltimate(s),
+    ultimate: reikoCanMove(s) || charlieCanUltimate(s) || melanieCanUltimate(s),
     ...(charlieCanUltimate(s) ? { ultimateLabel: 'Habilidad Definitiva: pierde 3 Vida y coge Golpe crítico' } : {}),
+    ...(melanieCanUltimate(s) ? { ultimateLabel: 'Habilidad Definitiva: pierde 1 Vida para repartir 2 de daño entre los Enemigos de tu espacio' } : {}),
     canRescue: rescuableVictims(s).length > 0,
   };
 }
@@ -183,6 +256,7 @@ export function inputMain(s: GameState, input: Input): 'done' | 'continue' {
       s.actionDiscard.push(input.cardId);
       log(s, `${fgName(s)} juega ${actionDef(input.cardId).name}.`);
       push(s, { t: 'playAction', cardId: input.cardId, ...(input.weaponUid ? { weaponUid: input.weaponUid } : {}), step: 'roll' });
+      creechBeforeAction(s, input.cardId);
       return 'continue';
     }
     case 'discardForTime': {
@@ -196,7 +270,7 @@ export function inputMain(s: GameState, input: Input): 'done' | 'continue' {
       s.fg.hand = hand;
       s.actionDiscard.push(...input.cardIds);
       log(s, `Descartas ${input.cardIds.length} ${input.cardIds.length === 1 ? 'carta' : 'cartas'} para ganar Tiempo.`);
-      changeTime(s, input.cardIds.length);
+      changeTime(s, input.cardIds.length * (has(s, 'ult-sheila') ? 2 : 1));
       return 'continue';
     }
     case 'useItem':
@@ -205,6 +279,10 @@ export function inputMain(s: GameState, input: Input): 'done' | 'continue' {
     case 'ultimate': {
       if (charlieCanUltimate(s)) {
         charlieUltimate(s);
+        return 'continue';
+      }
+      if (melanieCanUltimate(s)) {
+        melanieUltimate(s);
         return 'continue';
       }
       if (!reikoCanMove(s)) throw new RuleError('No puedes usar la Habilidad Definitiva ahora');
@@ -250,6 +328,7 @@ export function stepPlayAction(s: GameState, task: T<'playAction'>): 'done' | 'c
   log(s, `${def.name}: ${triple ? 'éxito triple' : n >= 2 ? 'éxito doble' : n === 1 ? 'éxito' : 'fracaso'}.`, n ? 'good' : 'bad');
   const src: EffectSource = { kind: 'action', id: task.cardId, ...(task.weaponUid ? { weaponUid: task.weaponUid } : {}) };
   resolveLine(s, line, src);
+  mapleAfterCard(s, task.cardId);
   return 'done';
 }
 
@@ -331,7 +410,8 @@ export function newRoll(s: GameState, purpose: RollPurpose): T<'roll'> {
       extra.push('−1 por perder a Zappo');
     }
   }
-  dice = Math.max(1, dice);
+  dice = mapleAdjustDice(s, purpose, dice, extra);
+  dice = creechAdjustDice(s, purpose, dice, extra);
   const auto34 = s.mods.partialsNextRoll || (s.phase === 'action' && s.mods.partialsThisPhase);
   s.mods.partialsNextRoll = false;
   const faces = Array.from({ length: dice }, () => rollDie(s.rng));
@@ -362,6 +442,7 @@ export function stepRoll(s: GameState, task: T<'roll'>): 'done' | 'wait' {
 
 function finishRoll(s: GameState, task: T<'roll'>): 'done' {
   task.successes = rollSuccesses(task);
+  creechAfterRoll(s, task.dice);
   if (task.purpose.kind === 'action' && dealsDamage(task.purpose.cardId)) mirrorsAfterRoll(s, task.dice);
   const idx = s.stack.indexOf(task);
   const parent = s.stack[idx - 1];
@@ -459,6 +540,12 @@ export function followLimit(s: GameState): number {
 
 function moveDestinations(s: GameState, mode: T<'fgMove'>['mode']): ZoneId[] {
   if (mode === 'free') return [s.killer.zone];
+  if (mode === 'convince') return convinceTargets(s);
+  const zones = mapleLockedHouses(s, mapleFilterDestinations(s, baseDestinations(s, mode), mode));
+  return creechFilterDestinations(s, zones, mode);
+}
+
+function baseDestinations(s: GameState, mode: 'walk' | 'boat' | 'free'): ZoneId[] {
   if (mode === 'boat') return locationDef(s).zones.filter((z) => z.water && z.id !== s.fg.zone).map((z) => z.id);
   if (s.fg.legTrap) return [];
   const adj = neighbors(s, s.fg.zone, 'fg');
@@ -471,13 +558,24 @@ function moveDestinations(s: GameState, mode: T<'fgMove'>['mode']): ZoneId[] {
   return adj;
 }
 
-export function stepFgMove(s: GameState, task: T<'fgMove'>): 'done' | 'wait' {
+export function stepFgMove(s: GameState, task: T<'fgMove'>): 'done' | 'wait' | 'continue' {
   if (task.remaining <= 0) return 'done';
+  // Pánico (Creech Manor): el espacio se decide con una tirada de huida.
+  const why = creechPanicWhy(s, task.mode);
+  const allowed = why ? moveDestinations(s, task.mode) : [];
+  if (why && allowed.length) {
+    const dest = creechPanicDestination(s, why, allowed);
+    if (!dest) {
+      task.remaining--;
+      return task.remaining <= 0 ? 'done' : 'continue';
+    }
+    return inputFgMove(s, task, { type: 'moveTo', zone: dest, bring: [] });
+  }
   s.prompt = {
     type: 'move',
     remaining: task.remaining,
     to: moveDestinations(s, task.mode),
-    followers: victimsIn(s, s.fg.zone).filter((v) => v.role !== 'hombre' && v.role !== 'lobo').map((v) => v.id),
+    followers: victimsIn(s, s.fg.zone).filter((v) => v.role !== 'hombre' && v.role !== 'lobo' && creechCanFollow(s, v) && mapleCanFollow(s, v)).map((v) => v.id),
     followLimit: followLimit(s),
     mode: task.mode,
   };
@@ -494,11 +592,11 @@ export function inputFgMove(s: GameState, task: T<'fgMove'>, input: Input): 'don
   if (!moveDestinations(s, task.mode).includes(input.zone)) throw new RuleError('No puedes moverte ahí');
   const from = s.fg.zone;
   const here = victimsIn(s, from);
-  const killerThere = s.killer.zone === input.zone;
+  const killerThere = killerIn(s, input.zone);
   const jump = task.mode === 'walk' && !neighbors(s, from, 'fg').includes(input.zone);
   let bring = here.filter((v) => input.bring.includes(v.id));
   if (bring.length !== input.bring.length) throw new RuleError('Esas Víctimas no están contigo');
-  if (bring.some((v) => v.role === 'hombre' || v.role === 'lobo')) throw new RuleError('Esa Víctima no te sigue');
+  if (bring.some((v) => v.role === 'hombre' || v.role === 'lobo' || !creechCanFollow(s, v) || !mapleCanFollow(s, v))) throw new RuleError('Esa Víctima no te sigue');
   if (jump) {
     if (bring.length) log(s, 'Saltas con la pértiga: ninguna Víctima puede seguirte.', 'bad');
     bring = [];
@@ -507,7 +605,15 @@ export function inputFgMove(s: GameState, task: T<'fgMove'>, input: Input): 'don
   }
   if (bring.length > followLimit(s)) throw new RuleError(`Solo te pueden seguir ${followLimit(s)} Víctimas`);
   // Las Víctimas no te siguen a la zona del Asesino (salvo la Novia o con la Habilidad de Barbara).
-  if (killerThere && !has(s, 'ult-barbara') && bring.some((v) => v.role !== 'novia')) {
+  // «Víctimas pegajosas»: debes tener al menos 1 Víctima siguiéndote, si es posible.
+  if (!jump && !bring.length && creechMustFollow(s)) {
+    const first = here.find((v) => v.role !== 'hombre' && v.role !== 'lobo' && creechCanFollow(s, v) && mapleCanFollow(s, v));
+    if (first && followLimit(s) > 0) {
+      bring = [first];
+      log(s, 'Víctimas pegajosas: una Víctima se pega a ti y te sigue.', 'bad');
+    }
+  }
+  if (killerThere && !has(s, 'ult-barbara') && !creechFollowKiller(s) && bring.some((v) => v.role !== 'novia')) {
     bring = bring.filter((v) => v.role === 'novia');
     log(s, 'Las Víctimas no te siguen a la zona del Asesino: se quedan atrás.', 'bad');
   }
@@ -523,13 +629,16 @@ export function inputFgMove(s: GameState, task: T<'fgMove'>, input: Input): 'don
     if (boat) boat.zone = input.zone;
   }
   const who = bring.length ? ` con ${bring.length === 1 ? victimLabel(bring[0]!) : `${bring.length} Víctimas`}` : '';
-  log(s, `${fgName(s)} va a ${zoneName(s, input.zone)}${who}.`, 'info', { kind: 'fgMove', path: [from, input.zone] });
+  log(s, `${fgName(s)} va a ${zoneName(s, input.zone)}${who}.`, 'info', { kind: 'fgMove', path: [from, input.zone], ...(bring.length ? { victims: bring.map((v) => v.id) } : {}) });
   for (const v of bring) moveVictim(s, v, input.zone);
   onFgEnter(s, input.zone);
+  creechOnFgEnter(s, input.zone);
+  mapleOnFgEnter(s, input.zone);
+  birdsOnFgEnter(s);
   if (task.mode !== 'walk') task.remaining = 0;
   if (task.remaining <= 0) offerGuideMove(s, task);
   if (rescuableVictims(s).length) push(s, { t: 'rescue' });
-  return task.remaining > 0 ? 'continue' : 'done';
+  return task.remaining > 0 && !s.outcome ? 'continue' : 'done';
 }
 
 /** El guía turístico: una vez por turno, tras moverte, puedes moverte 1 espacio más. */
@@ -585,9 +694,11 @@ export function inputRescue(s: GameState, input: Input): 'done' | 'continue' {
       s.fg.ultimate = true;
       log(s, `¡Habilidad Definitiva desbloqueada! ${fg.ultimate.text}`, 'good');
       if (fg.ultimate.custom === 'ult-adelaide') grooves.adelaideUltimate(s);
+      if (fg.ultimate.custom === 'ult-alice') creechAliceUltimate(s);
     }
     pushEffects(s, slot.effects, { kind: 'rescue' });
   }
+  if (v.bsp) birdsOnSpecialSaved(s);
   return 'continue';
 }
 
@@ -685,11 +796,14 @@ export function inputDiscardDown(s: GameState, input: Input): 'done' {
 function useItem(s: GameState, uid: string, action: string): void {
   const opt = itemActions(s).find((o) => o.uid === uid && o.action === action);
   if (!opt) throw new RuleError('No puedes usar ese objeto ahora');
+  if (uid === 'ml:br') return pushEffects(s, [{ kind: 'custom', id: 'df-resolve-br' }], { kind: 'system' });
   if (uid === 'horror:la-volubilidad-de-los-dioses') return grooves.discardFickleGods(s);
   if (uid === 'cn:legtrap') return removeLegTrap(s);
   const it = s.fg.items.find((i) => i.uid === uid)!;
   const def = itemDef(s, it.id);
   if (grooves.useGroovesItem(s, uid, def.custom)) return;
+  if (creechUseItem(s, uid, def.custom, action)) return;
+  if (mapleUseItem(s, uid, def.custom, action)) return;
   switch (def.custom) {
     case 'item-whistle': {
       s.mods.usedThisPhase.push(uid);
@@ -760,7 +874,7 @@ function useItem(s: GameState, uid: string, action: string): void {
       discardItem(s, uid);
       return;
     case 'item-fireworks': {
-      const options = [s.fg.zone, ...neighbors(s, s.fg.zone, 'fg')].filter((z) => z !== 'lago');
+      const options = [s.fg.zone, ...neighbors(s, s.fg.zone, 'fg')].filter((z) => z !== 'lago' && !zoneDef(s, z).house);
       push(s, choice('¿Dónde colocas los Fuegos artificiales?', options.map((z) => ({ id: z, label: zoneName(s, z) })), { kind: 'custom', id: 'place-fireworks', data: { uid } }));
       return;
     }
@@ -835,4 +949,40 @@ function afterItemRoll(s: GameState, task: T<'roll'>): void {
       src: { kind: 'item', id: 'pata-de-conejo' },
     }));
   }
+}
+
+// ---------------------------------------------------------------- golpes fuera de la fase de Acción
+
+function strikePrompt(s: GameState, task: T<'strike'>): Prompt {
+  return {
+    type: 'main',
+    strike: task.mode,
+    playable: playableCards(s).filter((c) => dealsDamage(c.cardId)),
+    itemActions: [],
+    ultimate: false,
+    canRescue: false,
+  };
+}
+
+/** Gigante, Muñeco Payaso, «¡Tengo que matarte!»: puedes jugar cartas de Acción que hagan daño. */
+export function stepStrike(s: GameState, task: T<'strike'>): 'done' | 'wait' {
+  const prompt = strikePrompt(s, task);
+  if (task.left <= 0 || prompt.type !== 'main' || !prompt.playable.length) {
+    cs(s).strike = null;
+    return 'done';
+  }
+  s.prompt = prompt;
+  return 'wait';
+}
+
+export function inputStrike(s: GameState, task: T<'strike'>, input: Input): 'done' | 'continue' {
+  if (input.type === 'endActionPhase') {
+    cs(s).strike = null;
+    return 'done';
+  }
+  if (input.type !== 'playCard') throw new RuleError('Solo puedes jugar una carta de Acción que haga daño o terminar');
+  if (!dealsDamage(input.cardId)) throw new RuleError('Esa carta no hace daño');
+  const r = inputMain(s, input);
+  task.left--;
+  return r;
 }

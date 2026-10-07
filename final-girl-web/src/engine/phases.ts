@@ -15,7 +15,10 @@ import {
 import { carnivalEventRevealed, carnivalFinaleRevealed, carnivalHorrorGate, carnivalTurnEnd, carnivalTurnStart, carnivalUpkeep } from './carnival';
 import { groovesEventRevealed, holyManUpkeep, miracleFinale, sacredGroundAtActionEnd, upkeepRoll } from './grooves';
 import { choice, registerChoice } from './registry';
-import { actionDef, boardDef, distances, eventDef, fgDef, horrorDef, killerDef, locationDef, shortestPaths, zoneName } from './lookup';
+import { mapleEventRevealed, mapleFinaleRevealed, mapleKillerPhaseEnd, mapleKillerPhaseStart, mapleTurnEnd, mapleTurnStart, mapleUpkeep } from './maple';
+import { creechEventRevealed, creechFinaleRevealed, creechHorrorGate, creechSkipsHorror, creechTurnStart, planCost } from './creech';
+import { actionDef, boardDef, distances, eventDef, fgDef, horrorDef, killerDef, killerIn, locationDef, shortestPaths, zoneName } from './lookup';
+import { birdsUpkeep } from './birds';
 import { hasActionPhaseOptions, mainPrompt } from './player';
 import { pick } from './rng';
 import type { GameState, Input, Phase, Task } from './state';
@@ -77,6 +80,8 @@ function stepActionPhase(s: GameState, task: T<'phase'>): 'done' | 'continue' | 
       s.mods.timeAtNextAction = null;
       log(s, `Empiezas la fase de Acción con ${s.fg.time} de Tiempo.`, 'good');
     }
+    creechTurnStart(s);
+    mapleTurnStart(s);
     carnivalTurnStart(s);
     if (s.stack[s.stack.length - 1] !== task) return 'continue';
   }
@@ -94,7 +99,7 @@ function stepActionPhase(s: GameState, task: T<'phase'>): 'done' | 'continue' | 
 function buyable(s: GameState): CardId[] {
   if (s.fg.hand.length >= 10) return [];
   return Object.entries(s.actionTable)
-    .filter(([id, n]) => n > 0 && actionDef(id).cost > 0 && actionDef(id).cost <= s.fg.time)
+    .filter(([id, n]) => n > 0 && planCost(s, id) > 0 && planCost(s, id) <= s.fg.time)
     .map(([id]) => id);
 }
 
@@ -103,7 +108,7 @@ function stepPlanning(s: GameState, task: T<'phase'>): 'done' | 'wait' {
     task.step = 1;
     // Las cartas de Coste Cero de la Tabla se compran siempre (si cabe en la mano).
     for (const [id, n] of Object.entries(s.actionTable)) {
-      if (actionDef(id).cost !== 0) continue;
+      if (planCost(s, id) !== 0) continue;
       for (let i = 0; i < n && s.fg.hand.length < 10; i++) {
         s.actionTable[id]!--;
         s.fg.hand.push(id);
@@ -137,10 +142,11 @@ export function inputPlanning(s: GameState, task: T<'phase'>, input: Input): 'co
   if (input.type !== 'buy') throw new RuleError('Respuesta no válida en la Planificación');
   if (!buyable(s).includes(input.cardId)) throw new RuleError('No puedes comprar esa carta');
   const def = actionDef(input.cardId);
+  const cost = planCost(s, input.cardId);
   s.actionTable[input.cardId]!--;
   s.fg.hand.push(input.cardId);
-  s.fg.time -= def.cost;
-  log(s, `Compras ${def.name} por ${def.cost} de Tiempo (quedan ${s.fg.time}).`);
+  s.fg.time -= cost;
+  log(s, `Compras ${def.name} por ${cost} de Tiempo (quedan ${s.fg.time}).`);
   return 'continue';
 }
 
@@ -151,6 +157,7 @@ function stepKillerPhase(s: GameState, task: T<'phase'>): 'done' | 'continue' {
   if (task.step === 0) {
     task.step = 1;
     s.mods.killedThisKillerPhase = 0;
+    mapleKillerPhaseStart(s);
     const finale = k.finales.find((f) => f.id === s.killer.finale)!;
     const action = s.killer.finaleRevealed ? finale.finalAction : k.initialAction;
     // Con Esbirros hay una Acción de Esbirro (línea M) y otra del Asesino (línea K): se resuelven de arriba abajo.
@@ -175,12 +182,29 @@ function stepKillerPhase(s: GameState, task: T<'phase'>): 'done' | 'continue' {
     }
     return 'continue';
   }
+  if (task.step === 2) {
+    // Dormida, al final de la fase del Asesino se resuelve una carta de la Sala de Calderas.
+    task.step = 3;
+    mapleKillerPhaseEnd(s);
+    return 'continue';
+  }
   return goTo(s, task, 'panic');
 }
 
 export function stepHorror(s: GameState, task: T<'horror'>): 'done' {
   const card = horrorDef(s, task.cardId);
-  log(s, `Carta de Horror: ${card.name}.`, 'killer', undefined, { kind: 'horror', id: card.id });
+  if (!task.asked) log(s, `Carta de Horror: ${card.name}.`, 'killer', undefined, { kind: 'horror', id: card.id });
+  // Carolyn: algunas cartas se descartan según esté o no contigo.
+  if (creechSkipsHorror(s, card.skipIf)) {
+    log(s, card.skipIf === 'carolyn' ? 'Carolyn está contigo: se descarta y se roba la siguiente.' : 'Carolyn no está contigo: se descarta y se roba la siguiente.');
+    s.horrorDiscard.push(card.id);
+    const next = s.horrorDeck.shift();
+    if (next) {
+      s.infoSeq++;
+      push(s, { t: 'horror', cardId: next });
+    }
+    return 'done';
+  }
   if (card.requiresVictims && !s.victims.some((v) => v.role !== 'lobo')) {
     log(s, 'No hay Víctimas en el tablero: se descarta y se roba la siguiente.');
     s.horrorDiscard.push(card.id);
@@ -191,9 +215,12 @@ export function stepHorror(s: GameState, task: T<'horror'>): 'done' {
     }
     return 'done';
   }
+  // Crucifijo: ignorar una carta de Terror.
+  if (!task.asked && creechHorrorGate(s, card.id)) return 'done';
   if (card.minorDarkPower) {
     s.killer.minors.push({ id: card.id, hp: card.minorDarkPower.health });
     log(s, `Poder Oscuro Menor en juego (${card.minorDarkPower.health} Vidas). ${card.text}`, 'killer');
+    pushEffects(s, card.effects, { kind: 'horror', id: card.id });
     return 'done';
   }
   if (card.stays) {
@@ -214,7 +241,7 @@ export function stepHorror(s: GameState, task: T<'horror'>): 'done' {
 export function stepEvent(s: GameState, task: T<'event'>): 'done' {
   const ev = eventDef(s, task.cardId);
   log(s, `Evento: ${ev.name}. ${ev.text}`, 'phase', undefined, { kind: 'event', id: ev.id });
-  if (ev.specialVictim && !s.victims.length) {
+  if (ev.specialVictim && !s.victims.length && !ev.custom?.startsWith('ev-ml-')) {
     log(s, 'No hay Víctimas en el tablero: el Evento se ignora.');
     s.eventDiscard.push(ev.id);
     return 'done';
@@ -252,6 +279,17 @@ export function stepEvent(s: GameState, task: T<'event'>): 'done' {
     case 'ev-too-much-junk':
       carnivalEventRevealed(s, ev.custom);
       break;
+    case 'ev-ml-police':
+    case 'ev-ml-fire':
+    case 'ev-ml-boyfriend':
+    case 'ev-ml-smalleys':
+      mapleEventRevealed(s, ev.custom);
+      break;
+    case 'ev-helicopter':
+    case 'ev-nobody-returns':
+    case 'ev-ghost-hunters':
+      creechEventRevealed(s, ev.custom);
+      break;
     case 'ev-dark-waters':
       s.tokens.push({ id: 'aguas-oscuras', zone: 'lago' });
       applyDarkWaters(s);
@@ -267,8 +305,8 @@ export function stepEvent(s: GameState, task: T<'event'>): 'done' {
   return 'done';
 }
 
-const ROLE_COLOR = { novio: 'blue', novia: 'white', maldita: 'orange', super: 'white', hombre: 'blue', guia: 'green', prometido: 'blue', hermana: 'white', lobo: 'orange' } as const;
-const ROLE_NAME = { novio: 'el Novio', novia: 'la Novia', maldita: 'la Maldita', super: 'el Super Turista', hombre: 'el Hombre Sagrado', guia: 'el Guía Turístico', prometido: 'tu Prometido', hermana: 'tu Hermana', lobo: 'el Hombre Lobo' } as const;
+const ROLE_COLOR = { novio: 'blue', novia: 'white', maldita: 'orange', super: 'white', hombre: 'blue', guia: 'green', prometido: 'blue', hermana: 'white', lobo: 'orange', cazador: 'white', 'novio-ml': 'blue', smalley: 'orange' } as const;
+const ROLE_NAME = { novio: 'el Novio', novia: 'la Novia', maldita: 'la Maldita', super: 'el Super Turista', hombre: 'el Hombre Sagrado', guia: 'el Guía Turístico', prometido: 'tu Prometido', hermana: 'tu Hermana', lobo: 'el Hombre Lobo', cazador: 'una Víctima Especial', 'novio-ml': 'tu Novio', smalley: 'uno de los Smalleys' } as const;
 export type Role = keyof typeof ROLE_COLOR;
 
 export function assignRole(s: GameState, role: Role, from: ZoneId, farthest: boolean): void {
@@ -301,9 +339,11 @@ registerChoice('secret-tunnel', (s, option) => {
 // ---------------------------------------------------------------- Huida y Mantenimiento
 
 function stepPanic(s: GameState, task: T<'phase'>): 'done' {
-  if (s.mods.killedThisTurn > 0) {
+  if (s.mods.killedThisTurn > 0 && has(s, 'ev-frozen-fear')) {
+    log(s, 'Congelado por el miedo: las Víctimas no huyen.', 'killer');
+  } else if (s.mods.killedThisTurn > 0) {
     // Las Víctimas que están con un Esbirro huyen igual que con el Asesino (pág. 33).
-    const fleeing = s.victims.filter((v) => v.zone === s.killer.zone || s.minions.some((m) => m.zone === v.zone));
+    const fleeing = s.victims.filter((v) => killerIn(s, v.zone) || s.minions.some((m) => m.zone === v.zone));
     if (fleeing.length) log(s, 'Ha muerto alguien este turno: las Víctimas de la zona de un Enemigo huyen.');
     panicVictims(s, fleeing);
   }
@@ -329,6 +369,8 @@ function stepUpkeep(s: GameState, task: T<'phase'>): 'done' | 'continue' | 'wait
   if (task.step === 3) {
     task.step = 4;
     carnivalUpkeep(s);
+    mapleUpkeep(s);
+    birdsUpkeep(s);
     return 'continue';
   }
   if (task.step === 4) {
@@ -357,6 +399,7 @@ function stepUpkeep(s: GameState, task: T<'phase'>): 'done' | 'continue' | 'wait
   s.mods.killedThisTurn = 0;
   s.mods.usedThisTurn = [];
   carnivalTurnEnd(s);
+  mapleTurnEnd(s);
   return goTo(s, task, 'action');
 }
 
@@ -369,6 +412,8 @@ export function revealFinale(s: GameState): void {
   revealDarkPowers(s);
   if (finale.custom === 'finale-miracle') miracleFinale(s);
   carnivalFinaleRevealed(s, finale.custom);
+  creechFinaleRevealed(s, finale.custom);
+  mapleFinaleRevealed(s, finale.custom);
   if (finale.custom === 'finale-second-dark-power') {
     const pool = k.darkPowers.filter((d) => !d.epic && !s.killer.darkPowers.some((x) => x.id === d.id));
     if (pool.length) {

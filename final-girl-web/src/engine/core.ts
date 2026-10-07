@@ -1,6 +1,7 @@
-import type { Effect, ZoneId } from '../content/types';
+import type { DieFace, Effect, ZoneId } from '../content/types';
 import { actionDef, boardDef, closedZone, distances, eventDef, fgDef, itemDef, killerDef, locationDef, neighbors, victimCanEnter, zoneDef, zoneName } from './lookup';
 import { pick, rollDie } from './rng';
+import { choice, registerChoice } from './registry';
 import type { EffectSource, GameState, LogEntry, Phase, Task, Victim } from './state';
 
 // ---------------------------------------------------------------- utilidades
@@ -36,6 +37,23 @@ export const registerVictimEnters = (fn: VictimHook) => victimEnterHooks.push(fn
 const victimKilledHooks: ((s: GameState, v: Victim, zone: ZoneId, opts: KillOpts) => void)[] = [];
 export const registerVictimKilled = (fn: (s: GameState, v: Victim, zone: ZoneId, opts: KillOpts) => void) => victimKilledHooks.push(fn);
 const terrorUpHooks: ((s: GameState) => void)[] = [];
+/** Puertas del Terror: devuelven true si interceptan el aumento (Crucifijo). */
+const terrorGates: ((s: GameState, amount: number) => boolean)[] = [];
+export const registerTerrorGate = (fn: (s: GameState, amount: number) => boolean) => terrorGates.push(fn);
+const darkPowerHooks: ((s: GameState, custom: string) => void)[] = [];
+export const registerDarkPowerReveal = (fn: (s: GameState, custom: string) => void) => darkPowerHooks.push(fn);
+const killerDeathHooks: ((s: GameState) => boolean)[] = [];
+/** Devuelven true si impiden que el Asesino muera (Nunca realmente muerto). */
+export const registerKillerDeath = (fn: (s: GameState) => boolean) => killerDeathHooks.push(fn);
+const fgDamagedHooks: ((s: GameState, amount: number) => void)[] = [];
+export const registerFgDamaged = (fn: (s: GameState, amount: number) => void) => fgDamagedHooks.push(fn);
+
+/** El Asesino no puede ser atacado ni dañado ahora (Poltergeist siempre; Dr. Fright mientras estés Despierta). */
+export function killerShielded(s: GameState): boolean {
+  if (killerDef(s).invulnerable) return true;
+  const m = s.maple;
+  return !!m && s.killer.id === 'dr-fright' && !m.asleep && !m.blurred;
+}
 export const registerTerrorUp = (fn: (s: GameState) => void) => terrorUpHooks.push(fn);
 
 const NEXT_PHASE: Record<Phase, Phase> = {
@@ -60,6 +78,10 @@ export function resetActionPhaseMods(s: GameState): void {
   s.mods.usedThisPhase = [];
   s.mods.rescuedThisActionPhase = 0;
   s.mods.actionPhaseEnding = false;
+  if (s.creech) {
+    s.creech.panicNow = false;
+    s.creech.lockNow = null;
+  }
 }
 
 export { NEXT_PHASE };
@@ -126,6 +148,7 @@ export function changeTime(s: GameState, amount: number): void {
 }
 
 export function changeTerror(s: GameState, amount: number): void {
+  if (amount > 0) for (const gate of terrorGates) if (gate(s, amount)) return;
   const last = boardDef(s).terrorTrack.length - 1;
   for (let n = 0; n < Math.abs(amount); n++) {
     if (amount > 0) {
@@ -177,7 +200,10 @@ export function damageFG(s: GameState, amount: number): void {
     log(s, `Máscara tribal: reduces una Ira en ${amount}.`, 'good');
     pushEffects(s, [{ kind: 'wrath', which: 'choose', op: 'reduce', amount }], { kind: 'item', id: 'mascara-tribal' });
   }
-  if (s.fg.health.hp > 0) return;
+  if (s.fg.health.hp > 0) {
+    for (const fn of fgDamagedHooks) fn(s, amount);
+    return;
+  }
   revealFinalLife(s, 'fg');
 }
 
@@ -188,8 +214,9 @@ export function healKiller(s: GameState, amount: number): void {
 }
 
 /** Daño de la Chica Final al Asesino: primero a los Poderes Oscuros Menores. */
-export function damageKiller(s: GameState, amount: number): void {
+export function damageKiller(s: GameState, amount: number, force = false): void {
   if (amount <= 0 || s.outcome) return;
+  if (!force && killerShielded(s)) return log(s, `${killerDef(s).name} no puede ser dañado ahora.`, 'info');
   log(s, `¡${amount} de daño a ${killerDef(s).name}!`, 'good');
   let left = amount;
   while (left > 0 && s.killer.minors.length) {
@@ -206,6 +233,7 @@ export function damageKiller(s: GameState, amount: number): void {
   if (left <= 0) return;
   s.killer.health.hp -= left;
   if (s.killer.health.hp > 0) return;
+  for (const hook of killerDeathHooks) if (hook(s)) return;
   // Maestro inmortal: con todas las Marionetas en el tablero, Geppetto no puede perder su ficha de Vida Final.
   const def = killerDef(s).minion;
   if (def && s.minions.length >= def.count && has(s, 'dp-immortal-master')) {
@@ -231,7 +259,7 @@ function revealFinalLife(s: GameState, who: 'fg' | 'killer'): void {
   if (h.token === 'black') log(s, `Se revela la ficha de Vida Final de ${name}: está en blanco.`, 'phase');
   if (who === 'killer') {
     s.outcome = { winner: 'finalGirl', text: `${name} ha muerto. ¡${fgDef(s).name} sobrevive!` };
-  } else if (s.killer.health.hp <= 0) {
+  } else if (s.killer.health.hp <= 0 && !killerDef(s).invulnerable) {
     s.outcome = { winner: 'finalGirl', text: `${name} se ha sacrificado para acabar con ${killerDef(s).name}.` };
   } else {
     s.outcome = { winner: 'killer', text: `${name} ha muerto. ${killerDef(s).name} gana.` };
@@ -260,7 +288,7 @@ export function increaseBloodlust(s: GameState, amount: number): void {
     }
     s.killer.bloodlust++;
     const row = k.bloodlust[s.killer.bloodlust]!;
-    log(s, `La Sed de Sangre aumenta (Ataque ${row.attack}, Movimiento ${row.move}).`, 'killer');
+    log(s, k.birds ? `La Sed de Sangre aumenta (casilla ${s.killer.bloodlust + 1} de ${k.bloodlust.length}).` : `La Sed de Sangre aumenta (Ataque ${row.attack}, Movimiento ${row.move}).`, 'killer');
     effects.push(...row.effects);
     if (row.revealDarkPower) revealDarkPowers(s);
     const extra = locationDef(s).bloodlustTrack?.rows[s.killer.bloodlust - 1];
@@ -279,6 +307,7 @@ export function revealDarkPowers(s: GameState): void {
     s.infoSeq++;
     const def = killerDef(s).darkPowers.find((d) => d.id === dp.id)!;
     log(s, `¡Se revela el Poder Oscuro: ${def.name}! ${def.text}`, 'killer', undefined, { kind: 'darkPower', id: def.id });
+    for (const fn of darkPowerHooks) fn(s, def.custom);
   }
 }
 
@@ -312,9 +341,12 @@ const ROLE_LABEL = {
   prometido: 'tu Prometido',
   hermana: 'tu Hermana',
   lobo: 'el Hombre Lobo',
+  cazador: 'una Víctima Especial',
+  'novio-ml': 'tu Novio',
+  smalley: 'uno de los Smalleys',
 } as const;
 
-export const victimLabel = (v: Pick<Victim, 'role'>) => (v.role ? ROLE_LABEL[v.role] : 'una Víctima');
+export const victimLabel = (v: Pick<Victim, 'role'> & { bsp?: true }) => (v.bsp ? 'una Víctima Especial' : v.role ? ROLE_LABEL[v.role] : 'una Víctima');
 
 /** Evento asociado a cada papel especial. */
 export const ROLE_EVENT = {
@@ -327,6 +359,9 @@ export const ROLE_EVENT = {
   prometido: 'corre-yo-les-entretendre',
   hermana: 'me-seguiste-hasta-aqui',
   lobo: 'luna-llena',
+  cazador: 'cazadores-de-fantasmas',
+  'novio-ml': 'novio',
+  smalley: 'los-smalleys',
 } as const;
 
 /** Una Víctima abandona la partida (muerta o salvada): descarta su Evento asociado. */
@@ -334,6 +369,9 @@ export function victimLeaves(s: GameState, v: Victim): void {
   const eventFor = ROLE_EVENT;
   if (!v.role) return;
   const ev = eventFor[v.role];
+  // Cazadores de fantasmas: la carta se queda hasta que la última Víctima Especial deja de jugar.
+  if (v.role === 'cazador' && s.victims.some((x) => x !== v && x.role === 'cazador')) return;
+  if (v.role === 'smalley' && s.victims.some((x) => x !== v && x.role === 'smalley')) return;
   if (s.activeEvents.includes(ev)) {
     s.activeEvents = s.activeEvents.filter((e) => e !== ev);
     s.eventDiscard.push(ev);
@@ -353,13 +391,14 @@ export interface KillOpts {
 export function killVictim(s: GameState, v: Victim, byKiller: boolean, opts: KillOpts = {}): void {
   if (!s.victims.includes(v)) return;
   if (v.role === 'lobo') return log(s, 'El Hombre Lobo no puede ser asesinado.', 'info');
+  if (v.bsp) return log(s, 'Las Víctimas Especiales nunca pueden ser atacadas ni asesinadas.', 'good');
   const zoneBefore = v.zone;
   const othersBefore = s.victims.filter((x) => x.zone === zoneBefore && x !== v);
   s.victims = s.victims.filter((x) => x !== v);
   s.dead.push(v);
   s.mods.killedThisTurn++;
   if (s.phase === 'killer') s.mods.killedThisKillerPhase++;
-  log(s, `Muere ${victimLabel(v)} en ${zoneName(s, zoneBefore)}.`, 'killer');
+  log(s, `Muere ${victimLabel(v)} en ${zoneName(s, zoneBefore)}.`, 'killer', { kind: 'victimDie', zone: zoneBefore });
   victimLeaves(s, v);
 
   const customs = activeCustoms(s);
@@ -455,10 +494,36 @@ export interface FleeOpts {
   deathFace?: number;
   /** La Víctima muere si huye a una de estas zonas (Marionetas, Payasos por doquier). */
   deathZones?: ZoneId[];
+  /** La Víctima muere si salta desde un espacio con ventana al exterior (Creech Manor). */
+  jumpDeath?: boolean;
 }
 
 export function victimFlees(s: GameState, v: Victim, opts: FleeOpts = {}): void {
+  // Factor sorpresa: en vez de huir, la Víctima es asesinada (máximo 3 por turno).
+  if (s.maple && has(s, 'dp-ml-surprise') && s.maple.surprise < 3) {
+    s.maple.surprise++;
+    log(s, `Factor sorpresa: ${capitalize(victimLabel(v))} entra en pánico y es asesinada.`, 'killer');
+    return killVictim(s, v, true);
+  }
   const face = rollDie(s.rng);
+  // Habilidad Definitiva de Paula: cada vez que tiras 1 dado, lanzas 2 y eliges cuál usar.
+  if (has(s, 'ult-paula')) {
+    const other = rollDie(s.rng);
+    if (other !== face) {
+      log(s, `Paula lanza 2 dados para la huida: ${face} y ${other}.`, 'info', { kind: 'dice', faces: [face, other] });
+      push(s, choice(`Huida de ${victimLabel(v)} (Paula): dados ${face} y ${other}. ¿Cuál usas?`, [{ id: String(face), label: `El ${face}` }, { id: String(other), label: `El ${other}` }], { kind: 'custom', id: 'paula-flee', data: { victim: v.id, opts } }));
+      return;
+    }
+  }
+  fleeWithFace(s, v, face, opts);
+}
+
+registerChoice('paula-flee', (s, option, data) => {
+  const v = s.victims.find((x) => x.id === data.victim);
+  if (v) fleeWithFace(s, v, Number(option) as DieFace, data.opts as FleeOpts);
+});
+
+function fleeWithFace(s: GameState, v: Victim, face: DieFace, opts: FleeOpts): void {
   if (opts.deathFace === face) {
     log(s, `${capitalize(victimLabel(v))} entra en pánico (dado ${face}) y no sobrevive.`, 'killer', { kind: 'dice', faces: [face] });
     return killVictim(s, v, false);
@@ -472,6 +537,10 @@ export function victimFlees(s: GameState, v: Victim, opts: FleeOpts = {}): void 
   if (!exit) {
     log(s, `${capitalize(victimLabel(v))} huye (dado ${face}) pero se queda en ${zoneName(s, from)}.`, 'info', { kind: 'dice', faces: [face] });
     return;
+  }
+  if (opts.jumpDeath && zoneDef(s, from).window && zoneDef(s, exit.to).outside) {
+    log(s, `${capitalize(victimLabel(v))} entra en pánico (dado ${face}) y salta por la ventana: muere.`, 'killer', { kind: 'dice', faces: [face] });
+    return killVictim(s, v, false);
   }
   log(s, `${capitalize(victimLabel(v))} huye (dado ${face}) de ${zoneName(s, from)} a ${zoneName(s, exit.to)}.`, 'info', {
     kind: 'victimMove',

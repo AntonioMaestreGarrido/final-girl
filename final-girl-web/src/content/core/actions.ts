@@ -266,4 +266,25 @@ export const ACTION_CARDS: ActionCard[] = [
       fail: [[{ kind: 'terror', amount: 1 }, { kind: 'time', amount: -2 }]],
     },
   },
+  // ---------------------------------------------- Frightmare on Maple Lane
+  {
+    id: 'convencer',
+    name: 'Convencer',
+    cost: 1,
+    copies: 2,
+    timing: 'action',
+    image: img('convencer'),
+    flavor: '«¡Por favor! ¡Déjame entrar! ¡No quiero morir aquí fuera!»',
+    text: '3 éxitos: entra en una Casa adyacente, puedes coger el Objeto superior (si lo haces, pon una X en la Casa). 2 éxitos: entra en una Casa adyacente. 1 éxito: entra en una Casa adyacente, −1 Tiempo. Fracaso: entra en una Casa adyacente, pierde 1 Vida y termina la fase de Acción; o devuelve esta carta al tablero de Acciones y −1 Tiempo. Solo sirve para entrar en una Casa ocupada.',
+    onlyWith: ['maple-lane'],
+    results: {
+      triple: [[{ kind: 'custom', id: 'ml-enter:take' }]],
+      double: [[{ kind: 'custom', id: 'ml-enter' }]],
+      single: [[{ kind: 'custom', id: 'ml-enter' }, { kind: 'time', amount: -1 }]],
+      fail: [
+        [{ kind: 'custom', id: 'ml-enter' }, { kind: 'loseHealth', amount: 1 }, { kind: 'endActionPhase' }],
+        [{ kind: 'custom', id: 'ml-return-card' }, { kind: 'time', amount: -1 }],
+      ],
+    },
+  },
 ];
